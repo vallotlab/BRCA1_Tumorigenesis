@@ -1,0 +1,173 @@
+---
+title: "scRNAseq_FUNCTIONS"
+author: "Melissa"
+date: "9/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r VlnPlot for QC steps}
+initialfeaturesPlot= function (SeurObj, qcfeatures) {
+          stopifnot(class(SeurObj)== "Seurat")
+          message("this step requires a Seurat Object")
+          p = VlnPlot(SeurObj, features = qcfeatures,  ncol = 3, combine = F) %>% lapply(.,FUN= function(x) {x + NoLegend()+ gtheme})
+          p1=cowplot::plot_grid(plotlist = p , ncol = 3)
+          return(p1)}
+```
+
+```{r}
+#This function has to be in a for loop:
+better_gene_umap= function(SeuratObject, genevector, i,pt.size){
+  stopifnot(class(SeuratObject) == "Seurat")
+  g <-  FeaturePlot(SeuratObject, genevector[i],combine=TRUE, pt.size=pt.size) + 
+    
+    geom_point(data= as.data.frame(SeuratObject[["umap"]]@cell.embeddings) , aes(x =UMAP_1, y = UMAP_2, fill= SeuratObject@assays$RNA[genevector[i]][1,],stroke=0.5), shape = 21,stroke=0.5, colour= "black", size=pt.size )   + scale_fill_viridis(option="B",limits = c(0.1, max(SeuratObject@assays$RNA[genevector[i]][1,])),  na.value= "grey",direction=-1) + NoLegend() + NoAxes() + ggtitle("")
+  return(g)
+  }
+```
+
+
+Stuck violin plot
+```{r}
+## remove the x-axis text and tick
+## plot.margin to adjust the white space between each plot.
+## ... pass any arguments to VlnPlot in Seurat
+modify_vlnplot<- function(obj, 
+                          feature, 
+                          cols,
+                          pt.size = 0, 
+                          plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                          ...) {
+  p<- VlnPlot(obj, features = feature, pt.size = pt.size,cols = cols, ... )  + 
+    xlab("") + ylab(feature) + ggtitle("") + 
+    theme(legend.position = "none", 
+          axis.text.x = element_blank(), 
+          axis.ticks.x = element_blank(), 
+          axis.title.y = element_text(size = rel(1), angle = 0), 
+          axis.text.y = element_text(size = rel(1)), 
+          plot.margin = plot.margin ) 
+  return(p)}
+#cols=my_color_celltypes
+## extract the max value of the y axis
+extract_max<- function(p){
+  ymax<- max(ggplot_build(p)$layout$panel_scales_y[[1]]$range$range)
+  return(ceiling(ymax))}
+## main function
+StackedVlnPlot<- function(obj, features,
+                          pt.size = 0, 
+                          plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                          ...) {
+  
+  plot_list<- purrr::map(features, function(x) modify_vlnplot(obj = obj,feature = x, ...))
+  
+  # Add back x-axis title to bottom plot. patchwork is going to support this?
+  plot_list[[length(plot_list)]]<- plot_list[[length(plot_list)]] +
+    theme(axis.text.x=element_text(angle=90), axis.ticks.x = element_line())
+  
+  # change the y-axis tick to only max value 
+  ymaxs<- purrr::map_dbl(plot_list, extract_max)
+  plot_list<- purrr::map2(plot_list, ymaxs, function(x,y) x + 
+                            scale_y_continuous(breaks = c(y)) + 
+                            expand_limits(y = y))
+
+  p<- patchwork::wrap_plots(plotlist = plot_list, ncol = 1)+ gtheme
+  return(p)
+}
+```
+
+Wrapper function to  run infer CNV:
+```{r}
+
+Wrapper_inferCNV= function( SeurObj,mdname,ref_group,outputPath, analysis_mode,HMM_type){
+  
+  message("Creation of the annotation object")
+  
+  stopifnot( (str(mdname) %in% colnames(SeurObj@meta.data) ))
+  
+  annotation <- as.data.frame(SeurObj$mdname) %>% rownames_to_column() 
+  rownames(annotation)= make.unique(annotation[,1])
+ n <-rownames(annotation)
+ annotation=as.data.frame(annotation[,-1], row.names = n); rm(n)
+ names(annotation)=NULL
+ counts_matrix <- as.matrix(SeurObj@assays$RNA@counts[,colnames(SeurObj)]) 
+ 
+ message("Creation of the inferCNV object")
+ 
+ cnv_Obj <-CreateInfercnvObject(counts_matrix, gene_order_file=gf, annotations_file=annotation,
+  max_cells_per_group = NULL,
+  min_max_counts_per_cell = NULL,ref_group_names= ref_group)
+ 
+ message("Running inferCNV is starting" )
+ 
+ infercnv <- infercnv::run(
+    cnv_Obj,
+    min_cells_per_gene = 50,
+    cutoff=0.1, # cutoff=1 works well for Smart-seq2, and cutoff=0.1 works well for 10x Genomics
+    out_dir=outputPath,
+    cluster_references = FALSE,
+    cluster_by_groups=TRUE, 
+    denoise=TRUE,
+    HMM=T,
+    analysis_mode = analysis_mode,
+    no_prelim_plot=FALSE,
+    png_res=500,
+   plot_steps=F,num_threads=1, HMM_type= HMM_type)
+ 
+  message( "Adding the inferCNV output to the Seurat obj")
+  
+ SeurObj=add_to_seurat(
+  seurat_obj = SeurObj,
+  infercnv_output_path = outputPath,
+  top_n = 50,
+  bp_tolerance = 2e+06)
+ 
+ return(SeurObj)
+}
+```
+
+```{r}
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+```
+
+
+```{r}
+PrctCellExpringGene <- function(object, genes, group.by = "all"){
+    if(group.by == "all"){
+        prct = unlist(lapply(genes,calc_helper, object=object))
+        result = data.frame(Markers = genes, Cell_proportion = prct)
+        return(result)
+    }
+
+    else{        
+        list = SplitObject(object, group.by)
+        factors = names(list)
+
+        results = lapply(list, PrctCellExpringGene, genes=genes)
+        for(i in 1:length(factors)){
+        results[[i]]$Feature = factors[i]
+        }
+        combined = do.call("rbind", results)
+        return(combined)
+    }
+}
+
+calc_helper <- function(object,genes){
+    counts = object[['RNA']]@data
+    ncells = ncol(counts)
+    if(genes %in% row.names(counts)){
+    sum(counts[genes,]>0)/ncells
+    }else{return(NA)}
+}
+```
+

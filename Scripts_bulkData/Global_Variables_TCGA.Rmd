@@ -1,0 +1,84 @@
+---
+title: "Global_Variables_TCGA"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load libraries, message=F}
+
+library(TCGAbiolinks)
+library(BiocManager)
+library(devtools)
+library(ggplot2)
+library(Seurat)
+library(ggpubr)
+library(viridis)
+library(here)
+library(qs)
+library(dplyr)
+library(tidyselect)
+library(tidyverse)
+
+library(RColorBrewer)
+library(colorRamps)
+library(Hmisc)
+library(ggrepel)
+library(patchwork)
+library(gtable)
+library(gridExtra)
+library(grid)
+
+library(openxlsx)
+library(slingshot)
+library(tidymodels)
+library(dendextend)
+library(reshape2)
+library(data.table)
+library(UCell)
+library(wesanderson)
+library(Hmisc) 
+library(survival)
+library("survminer")
+
+set.seed(42)
+```
+
+Hierarchy:
+The root directory is the main Dir; the Tumor_BRCA_p53
+
+```{r directories creation}
+mainDir= here::here() #"C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+inputDir <- file.path(mainDir,"input", "scRNAseq","mouse", "inputTCGA_Breast") ; if(!file.exists(inputDir )){dir.create(inputDir )}
+outputDir <- file.path(mainDir,"output", "scRNAseq","TCGA") ; if(!file.exists(outputDir )){dir.create(outputDir )}
+####
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+DEdir <- file.path(outputDir, "DiffExp") ; if(!file.exists(DEdir)){dir.create(DEdir)}
+SURVdir <- file.path(outputDir, "Survival_Analysis") ; if(!file.exists(SURVdir)){dir.create(SURVdir)}
+SIGdir <- file.path(outputDir, "Signatures") ; if(!file.exists(SIGdir)){dir.create(SIGdir)}
+GENEdir <- file.path(outputDir, "GeneticSignatures") ; if(!file.exists(GENEdir)){dir.create(GENEdir)}
+```
+
+Genes to keep plotting:
+EMT AND APOPTOSIS which were part of the P16 signature
+```{r}
+emtg <- c("Ndufab1", "Vdac3","Slc25a4","Polr2f","Uqcrq", "Cox5a", "Ndufa2", "Cox5b", "Atp5e","Ndufc1","Ndufv2","Uqcr10","Mdh2", "Atp5f1", "Vdac1", "Mrpl15", "Atp5j2" ,"Cyc1", "Atp5c1", "Cox7c", "Cox6c" , "Ndufb8" , "Mrpl34", "Echs1", "Timm8b", "Cycs", "Vdac2", "Timm17a", "Cox8a")
+##
+apoptog <- c("Atf3", "Cd14", "Btg2", "Lmna", "Krt18", "Hspb1", "Anxa1", "Jun", "Mcl1", "Txnip", "Gadd45b", "Clu", "App", "Nedd9","Timp2", "Bik", "Wee1", "Erbb3", "Crebbp", "Tap1", "Rela")
+```
+
+FOR PLOTTING:
+```{r gtheme for ggplots}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+
+

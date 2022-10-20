@@ -1,0 +1,166 @@
+---
+title: "Step3_3_AlterationPerChromosome"
+author: "Melissa"
+date: "04/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+#### KIP ALL THIS ¨PART TO GET THE BOXPLOT OF ALTERED GENOME ###################
+#-----------------------------------------------------------------------------#
+
+
+Barplot of altered chromosomes overall:
+per sample : binarized or counted per chromosome:
+
+```{r}
+tlg= qs::qread(paste0(oaltDir, "/Binarized_CNT_With_Basal.qs"))
+tlg2 <- qs::qread(paste0(oaltDir, "/Binarized_ST_WOBasal_SameThrasAll.qs"))
+tlg3 <- qs::qread(paste0(oaltDir, "/Binarized_MT_WOBasal.qs"))
+tlg4 <- qs::qread(paste0(oaltDir, "/Binarized_LT_WOBasal.qs"))
+```
+
+
+Split the controls per subtype:
+```{r}
+lp= tlg[,which(colnames(tlg) %in% rownames(cnt@meta.data)[which(cnt$subtype== "LP")]) ]
+p16= tlg[,which(colnames(tlg) %in% rownames(cnt@meta.data)[which(cnt$subtype== "P16+ Pre-lesional")]) ]
+avd=tlg[,which(colnames(tlg) %in% rownames(cnt@meta.data)[which(cnt$subtype== "Avd")]) ]
+```
+########
+Add the region information FOR THE ST
+```{r}
+gene_pos <- as.data.frame(ic_st@gene_order)
+colnames(gene_pos) <- c("chromosome","start","end")
+gene_pos$chromosome =  paste0("chr",gene_pos$chromosome)
+gg <- GenomicRanges::makeGRangesFromDataFrame(gene_pos)
+cytoband2= read.table(file= "/cytoBand.txt", header = F)
+colnames(cytoband2) <- c("chromosome", "start","stop","cytoband", "g")
+## transform them to a GRanges:
+library(GenomicRanges)
+gcyto <- GenomicRanges::makeGRangesFromDataFrame(cytoband2)
+tmp <- GenomicRanges::findOverlaps(query = gg, subject= gcyto, minoverlap = 100, type="within")
+### get the correspondance overlaps between the cytobands and the gene coordinates:
+gp <- gene_pos[queryHits(tmp),] 
+
+cr <- cytoband2[subjectHits(tmp),]
+##
+gp$cytoband = cr$cytoband
+gp$chr = paste0(gp$chromosome,"_", gp$cytoband)
+rm(tmp)
+rm(gg)
+rm(cr)
+gp$gene= rownames(gp)
+gp$region=paste0(gp$chr, "_", gp$cytoband)
+```
+
+```{r}
+all(rownames(avd)== rownames(ic_cnt@gene_order))
+lp$chr=ic_cnt@gene_order$chr
+avd$chr=ic_cnt@gene_order$chr
+p16$chr=ic_cnt@gene_order$chr
+```
+
+
+```{r}
+tlg2=tlg2[,c(1:1436)]
+tlg4=tlg4[,c(1:3510)]
+tlg3=tlg3[,c(1:4082)]
+```
+
+Apply per sample the aggregation per chromsome:
+```{r}
+chlt=aggregate(tlg4[,-1], by=list(tlg4$chromosome), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+chlt <-  chlt %>% column_to_rownames("Group.1")
+#######
+chm=aggregate(tlg3[,-1], by=list(tlg3$chromosome), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+chm <-  chm %>% column_to_rownames("Group.1")
+####
+chs=aggregate(tlg2[,-1], by=list(tlg2$chromosome), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+chs <-  chs %>% column_to_rownames("Group.1")
+####
+cha=aggregate(avd[,-1], by=list(avd$chr), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+cha <-  cha %>% column_to_rownames("Group.1")
+###
+chl=aggregate(lp[,-1], by=list(lp$chr), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+chl <-  chl %>% column_to_rownames("Group.1")
+###
+chp=aggregate(p16[,-1], by=list(p16$chr), function(u) {table(factor(u, levels=1))}) %>% as.data.frame()
+chp <-  chp %>% column_to_rownames("Group.1")
+```
+
+Divide per the number of genes per chromosome:
+```{r}
+m <- table(avd$chr) %>% as.data.frame()
+m=m[-1,]
+##############
+cha=cha[-1,]
+chp=chp[-1,]
+chl=chl[-1,]
+###
+cha$chr= rownames(cha)
+chp$chr= rownames(chp)
+chl$chr= rownames(chl)
+chlt$chr= rownames(chlt)
+chm$chr= rownames(chm)
+chs$chr= rownames(chs)
+######################
+chlt$chr= as.character(gsub("chr","", chlt$chr))
+chs$chr= as.character(gsub("chr","", chs$chr))
+chm$chr=as.character( gsub("chr","", chm$chr))
+#######################
+cha=cha[match(m$Var1, cha$chr),]
+chl=chl[match(m$Var1, chl$chr),]
+chp=chp[match(m$Var1, chp$chr),]
+##
+chlt=chlt[match(m$Var1, chlt$chr),]
+chm=chm[match(m$Var1, chm$chr),]
+chs=chs[match(m$Var1, chs$chr),]
+######################
+stopifnot(m$Var1== chm$chr)
+stopifnot(m$Var1== chlt$chr)
+#####
+cha <- round(apply(cha[,-201], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+chl <- round(apply(chl[,-244], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+chp <- round(apply(chp[,-152], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+##
+chs <- round(apply(chs[,-1436], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+
+chm <- round(apply(chm[,-4082], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+chlt <- round(apply(chlt[,-3510], 2, function(n){ n/m$Freq}  ),3) %>%t() %>% as.data.frame() 
+```
+
+Combine all the alterations per chromosome:
+```{r}
+altchr= rbind(cha, chl, chp)
+altchr2= rbind(chs, chm, chlt)
+colnames(altchr)= paste0("chr", colnames(altchr))
+altchr= rbind(altchr, altchr2)
+qs::qsave(altchr, paste0(oaltDir, "/Matrix_PercentAlt_ChromosomePerCell.qs"))
+```
+
+##------------------------ START HERE ---------------------------------------------###
+```{r}
+altchr <- qs::qread(paste0(oaltDir, "/Matrix_PercentAlt_ChromosomePerCell.qs"))
+```
+
+
+Get the distribution :
+```{r}
+names(colgene)=paste0("chr", names(colgene))
+p <- altchr %>% melt()  %>% ggplot(aes(y=value,  x=variable, fill=variable)) + geom_boxplot(alpha=0.7,show.legend = F) + scale_fill_manual(values=colgene[-1]) +themplot+ gtheme + xlab("chromosome") + ylab("% Alterations") + coord_flip()
+##
+ggsave(filename =paste0(altDir, "/BoxPlot_AlteredChr_AllTumors.pdf"), device = "pdf", plot = p, width = 300, height = 300, dpi = 500, units = "mm" )
+```
+
+

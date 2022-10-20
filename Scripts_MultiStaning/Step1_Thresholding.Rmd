@@ -1,0 +1,543 @@
+---
+title: "Step1_Thresholding"
+author: "Melissa"
+date: "28/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### STEP 1 Cleaning and QC #######
+
+```{r directories creation}
+#the main Dir should be the root directory in which both input, output and script folders are stored
+mainDir= here::here()
+#
+#mainDir= "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+inputDir=  file.path(mainDir,"input", "multistaining", "V_juxta") 
+outputDir= file.path(mainDir, "output", "multiStaining")
+#####################
+RDatadir <- file.path(outputDir,"RData2") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC2") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+PLOTdir <- file.path(outputDir, "Plots2") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(reshape2)
+library(qdapRegex)
+library(mclust)
+library(stringr)
+library(data.table)
+library(sunburstR)
+```
+
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+################################### LOAD THE RAW DATA #############################################
+
+Part 1: Juxta
+```{r}
+inputDir=  file.path(mainDir,"input", "multistaining", "V_juxta") 
+lf= list.files(inputDir)[-1]
+samplename=qdapRegex::ex_between(lf, "DetectionMeasures_", ".txt")%>% unlist()
+
+ for(i in seq_len(length(lf))){
+   assign(samplename[i], read.table(paste0(inputDir, "/", lf[i]), header = TRUE, sep="\t"))
+ }
+
+Juxta= rbind(Juxta_AI9434_06_1_Zone1, Juxta_AI9434_06_1_Zone2)
+Juxta_G7058= rbind(G7059_Zone1, G7058_1_Zone2)
+T99_Juxta= rbind(T99_AI9434_01_1_Zone1, T99_AI9434_01_1_Zone2)
+```
+
+
+Part2:
+
+```{r}
+inputDir=  file.path(mainDir,"input", "multistaining") 
+lf= list.files(inputDir)[-7]
+samplename2=qdapRegex::ex_between(lf, "DetectionMeasures_", "_Background")%>% unlist()
+ for(i in seq_len(length(lf))){
+   assign(samplename2[i], read.table(paste0(inputDir, "/", lf[i]), header = TRUE, sep="\t"))
+ }
+
+```
+
+```{r}
+markers_to_analyze <- c(colnames(Juxta %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+
+dl= mget(c("Juxta","Juxta_G7058","T99_Juxta" ,samplename2))
+
+dl=lapply(dl, function(x) {
+  x = x %>% dplyr::select(markers_to_analyze)
+})
+
+for(i in seq_len(length(dl))){
+  colnames(dl[[i]])= gsub("Cell..", "", colnames(dl[[i]]))
+  dl[[i]]$sample= names(dl[i])
+}
+
+to.threshold= paste0("Channel.", c(2,3,6,7,8,9), ".mean")
+
+dt= lapply(dl, function(x) {
+  x= x %>% dplyr::select(c(to.threshold,"Parent") )
+})
+
+for(i in seq_len(length(dl))){
+  dt[[i]]$sample= names(dt[i])
+}
+```
+
+
+
+
+```{r}
+dt$mlesion_juxta$Parent= ifelse(dt$mlesion_juxta$Parent== "PathAnnotationObject", "Stroma",dt$mlesion_juxta$Parent )
+```
+
+```{r warning= FALSE}
+markers_to_analyze <- c(colnames(Cre_pos_3M %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+
+dl= mget(samplename)
+dl=lapply(dl, function(x) {
+  x = x %>% dplyr::select(markers_to_analyze)
+})
+
+
+
+pdf(paste0(QCdir, "/QC_meanOnly.pdf"))
+   for(i in seq_len(6)){
+
+  p <- dl[[i]] %>% melt() %>% ggplot(aes(x= value)) + 
+  geom_histogram( position = 'identity', bins= 25)  + facet_wrap(. ~ variable, ncol=2) + themplot + ggtitle(names(dl[i]))
+  print(p)
+}
+dev.off()
+```
+
+
+```{r}
+for(i in seq_len(6)){
+  colnames(dl[[i]])= gsub("Cell..", "", colnames(dl[[i]]))
+  dl[[i]]$sample= names(dl[i])
+}
+
+qs::qsave(dl, paste0(RDatadir, "/Raw_Merged_List.qs"))
+dl=qs::qread(paste0(RDatadir, "/Raw_Merged_List.qs"))
+```
+
+###Heatmap representation of the raw values ######
+```{r}
+tmp= do.call( rbind, dl)
+###
+annot= data.frame("sample"= tmp$sample, "Parent"= tmp$Parent)
+rownames(annot)=rownames(tmp)
+
+col= list()
+col$sample= c("#E41A1C", "#377EB8" ,"#4DAF4A", "#984EA3", "#FF7F00" ,"#FFFF33", "#A65628", "blue")
+names(col$sample)= unique(tmp$sample)
+col$Parent= c("#966C6C", "#61C271", "#439993",  "#394C96", "#CC584E")
+names(col$Parent)= unique(tmp$Parent)
+```
+
+
+```{r}
+pdf(paste0(outputDir, "/Heatmap_Raw.pdf"), height = 10, width = 14)
+p <- pheatmap::pheatmap(t(tmp[, 2:9]), cluster_cols = FALSE, annotation_col = annot, annotation_colors = col, show_colnames = FALSE, scale = "column")
+print(p)
+dev.off()
+##
+pdf(paste0(outputDir, "/Heatmap_Raw_Clustered_SamplesCells.pdf"))
+g <- pheatmap::pheatmap(tmp[sample(rownames(tmp), round(2/3* nrow(tmp))), 2:9], cluster_rows = TRUE, annotation_row = annot, annotation_colors = col, show_rownames = FALSE, show_colnames = TRUE , clustering_method = "ward.D2", clustering_distance_cols = "complete")
+print(g)
+dev.off()
+```
+
+Remove the stroma:
+```{r}
+tmp= tmp %>% filter(! Parent =="Stroma")
+pdf(paste0(outputDir, "/Heatmap_Raw_WOStroma.pdf"), height = 10, width = 14)
+p <- pheatmap::pheatmap(t(tmp[, 2:9]), cluster_cols = FALSE, annotation_col = annot, annotation_colors = col, show_colnames = FALSE, scale = "column")
+print(p)
+dev.off()
+####
+pdf(paste0(outputDir, "/Heatmap_Raw_Clustered_SamplesCells_WO_Stroma_Scaled.pdf"))
+g <- pheatmap::pheatmap(tmp[sample(rownames(tmp), round(2/3* nrow(tmp))), 2:9], cluster_rows = TRUE, annotation_row = annot, annotation_colors = col, show_rownames = FALSE, show_colnames = TRUE , clustering_method = "ward.D2", clustering_distance_cols = "euclidean", scale = "column")
+print(g)
+dev.off()
+```
+
+
+
+########################### THRESHOLDING PART #####################################
+Extract columns to threshold:
+
+Ch1=Hemato
+Ch2=Cdkn2a
+Ch3=Ecad
+Ch4=H3K27me3
+Ch5=Ki67
+Ch6=Krt5
+Ch7=Krt8
+Ch8=Ncad
+Ch9=Vim
+
+```{r}
+to.threshold= paste0("Channel.", c(2,3,6,7,8,9), ".mean")
+
+dt= lapply(dl, function(x) {
+  x= x %>% dplyr::select(c(to.threshold,"Parent") )
+})
+
+for(i in seq_len(6)){
+  dt[[i]]$sample= names(dt[i])
+}
+```
+
+Threshold p16:
+```{r}
+
+p16s= do.call(rbind, dt)
+#p16s= p16s %>% filter(sample== "C_Cre3M" )
+p16s = p16s %>% filter(!sample== "T7071")
+
+densCurve <- density(p16s$Channel.2.mean, adjust=1, cut=0)#
+inflPoints <- diff(sign(diff(densCurve$y)))
+
+maximumsDens <- which(inflPoints==-2)
+        max_y <- densCurve$y[maximumsDens]
+        max_x <- densCurve$x[maximumsDens]
+        minimumDens <- which(inflPoints==2)
+        min_y <- densCurve$y[minimumDens]
+        min_x <- densCurve$x[minimumDens]
+        # consider only what is after the highest max
+        new_start_point<-which(max_y==max(max_y))
+        max_x<-max_x[new_start_point:length(max_x)]
+        max_y<-max_y[new_start_point:length(max_y)]
+        min_x<-min_x[new_start_point:length(min_x)]
+        min_y<-min_y[new_start_point:length(min_y)]
+  
+         if(length(max_x)>=2){
+            temp_thr<-c()
+            for(i in 1:(length(max_y)-1)){
+                m1<-max_x[i]
+                m2<-max_x[i+1]
+                min<-min(min_y[which(min_x<m2&min_x>m1)],na.rm=T)
+                if(abs(m1-m2)>0.15 & abs(max(c(max_y[i],max_y[i+1]),na.rm=T)-min)>0.2*max(max_y,na.rm=T)&max_y[i+1]>0.2*max(max_y,na.rm=T)){
+                    temp_thr<-c(temp_thr,min_x[which(min_y==min)])
+                }
+            }
+            if(!is.null(temp_thr)){
+                thr<-max(temp_thr,na.rm = T)
+            }
+         }
+  thr_p16= thr #6.702553:Before; Now: 9.814453
+```
+
+Same for Vim:
+
+```{r}
+  d <- density(p16s$Channel.9.mean)
+thr_vim= 50  
+  #optimize(approxfun(d$x,d$y),interval=c(0, mean(p16s$Channel.9.mean)))$minimum 
+```
+
+
+Try Krt8:
+```{r}
+  d <- density(p16s$Channel.7.mean)
+thr_krt8=   optimize(approxfun(d$x,d$y),interval=c(0, mean(p16s$Channel.7.mean)))$minimum 
+```
+
+Ecad:
+```{r}
+d <- density(p16s$Channel.3.mean)
+thr_ecad=   optimize(approxfun(d$x,d$y),interval=c(0, mean(p16s$Channel.3.mean)))$minimum 
+```
+
+
+Set a threshold for NCAD from the small sample:
+```{r}
+ncad= dt$T7071$Channel.8.mean
+densCurve <- density(ncad, adjust=1, cut=0)#, adjust=1, cut=0
+inflPoints <- diff(sign(diff(densCurve$y)))
+
+maximumsDens <- which(inflPoints==-2)
+        max_y <- densCurve$y[maximumsDens]
+        max_x <- densCurve$x[maximumsDens]
+        minimumDens <- which(inflPoints==2)
+        min_y <- densCurve$y[minimumDens]
+        min_x <- densCurve$x[minimumDens]
+        # consider only what is after the highest max
+        new_start_point<-which(max_y==max(max_y))
+        max_x<-max_x[new_start_point:length(max_x)]
+        max_y<-max_y[new_start_point:length(max_y)]
+        min_x<-min_x[new_start_point:length(min_x)]
+        min_y<-min_y[new_start_point:length(min_y)]
+  
+         if(length(max_x)>=2){
+            temp_thr<-c()
+            for(i in 1:(length(max_y)-1)){
+                m1<-max_x[i]
+                m2<-max_x[i+1]
+                min<-min(min_y[which(min_x<m2&min_x>m1)],na.rm=T)
+                if(abs(m1-m2)>0.15 & abs(max(c(max_y[i],max_y[i+1]),na.rm=T)-min)>0.2*max(max_y,na.rm=T)&max_y[i+1]>0.2*max(max_y,na.rm=T)){
+                    temp_thr<-c(temp_thr,min_x[which(min_y==min)])
+                }
+            }
+            if(!is.null(temp_thr)){
+                thr<-max(temp_thr,na.rm = T)
+            }
+         }
+
+
+   thr_ncad= thr
+```
+
+```{r}
+for(i in seq_len(length(dt))){
+ dt[[i]]$sample= names(dt[i])
+  dt[[i]]$thrp16= paste0("thr_p16_" , dt[[i]]$sample)
+   dt[[i]]$threcad= paste0("thr_ecad_" , dt[[i]]$sample)
+    dt[[i]]$thrkrt5= paste0("thr_krt5_" , dt[[i]]$sample)
+     dt[[i]]$thrkrt8= paste0("thr_krt8_" , dt[[i]]$sample)
+      dt[[i]]$thrncad= paste0("thr_ncad_" , dt[[i]]$sample)
+       dt[[i]]$thrvim= paste0("thr_vim_" , dt[[i]]$sample)
+     }
+```
+
+
+
+```{r}
+data=dt
+
+##Binarize now:
+for(i in seq_len(length(dt))){
+  for(j in seq_len(nrow(dt[[i]]))){
+    
+     dt[[i]]$Channel.2.mean[j]= ifelse(dt[[i]]$Channel.2.mean[j] <= thr_p16, 0, 1)
+     
+     #dt[[i]]$Channel.3.mean[j]= ifelse(dt[[i]]$Channel.3.mean[j] <= thr_ecad[dt[[i]]$threcad[j]], 0, 1)
+     dt[[i]]$Channel.3.mean[j]= ifelse(dt[[i]]$Channel.3.mean[j] <= thr_ecad, 0, 1)
+     
+     dt[[i]]$Channel.6.mean[j]= ifelse(dt[[i]]$Channel.6.mean[j] <= 50, 0, 1)
+     
+     dt[[i]]$Channel.7.mean[j]= ifelse(dt[[i]]$Channel.7.mean[j] <= thr_krt8, 0, 1)
+                                       
+    # dt[[i]]$Channel.6.mean[j]= ifelse(dt[[i]]$Channel.6.mean[j] <= thr_krt5[dt[[i]]$thrkrt5[j]], 0, 1)
+     #dt[[i]]$Channel.7.mean[j]= ifelse(dt[[i]]$Channel.7.mean[j] <= thr_krt8[dt[[i]]$thrkrt8[j]], 0, 1)
+     
+     dt[[i]]$Channel.8.mean[j]= ifelse(dt[[i]]$Channel.8.mean[j] <= thr_ncad, 0, 1)
+     
+     dt[[i]]$Channel.9.mean[j]= ifelse(dt[[i]]$Channel.9.mean[j] <= thr_vim, 0, 1)
+  }
+}
+```
+
+```{r}
+#Before merging, correct the parent names:
+unique(dt$Cre_neg_5M$Parent)
+dt$Cre_neg_5M$Parent= "Duct"
+unique(dt$Cre_pos_3M$Parent)
+
+dt$Cre_pos_3M$Parent=dplyr::recode(dt$Cre_pos_3M$Parent, "PathAnnotationObject"="Duct")
+dt$T99_5617_Tumeur$Parent="Tumor"
+
+unique(dt$Juxta$Parent)
+dt$Juxta$Parent= "Duct_Juxta"
+dt$Juxta_G7058$Parent="Duct_Juxta"
+dt$T99_Juxta$Parent="Duct_Juxta"
+
+dtest= do.call(rbind, dt)
+qs::qsave(dtest, paste0(RDatadir, "/Thresholded_matrix_Binarized_Part1_Final2.qs"))
+```
+
+```{r}
+pdf(paste0(QCdir, "/Nbr_Pos_Neg_Markers_ToThreshold6.pdf"), height = 8, width = 14)
+  n=as.data.frame.matrix(table(dtest$Channel.2.mean, dtest$thrp16))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("P16")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Channel.3.mean, dtest$threcad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ecad")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Channel.6.mean, dtest$thrkrt5))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt5")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Channel.7.mean, dtest$thrkrt8))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt8")
+   print(p)
+    n=as.data.frame.matrix(table(dtest$Channel.8.mean, dtest$thrncad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ncad")
+   print(p)
+   
+    n=as.data.frame.matrix(table(dtest$Channel.9.mean, dtest$thrvim))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Vim")
+   print(p)
+   
+dev.off()
+```
+
+
+Add the information on the spatial location:
+
+```{r}
+dtest$thrp16= paste0(dtest$thrp16, "_", dtest$Parent)
+dtest$threcad= paste0(dtest$threcad, "_", dtest$Parent)
+dtest$thrkrt5= paste0(dtest$thrkrt5, "_", dtest$Parent)
+dtest$thrkrt8= paste0(dtest$thrkrt8, "_", dtest$Parent)
+dtest$thrncad= paste0(dtest$thrncad, "_", dtest$Parent)
+dtest$thrvim= paste0(dtest$thrvim, "_", dtest$Parent)
+
+pdf(paste0(QCdir, "/Nbr_Pos_Neg_Markers_6.pdf"), height = 8, width = 14)
+  
+  n=as.data.frame.matrix(table(dtest$Channel.2.mean, dtest$thrp16))
+  n$class=c("neg", "pos")
+   
+  p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("P16") 
+   print(p)
+  ##
+   n=as.data.frame.matrix(table(dtest$Channel.3.mean, dtest$threcad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ecad")
+   print(p)
+   
+   ##
+   n=as.data.frame.matrix(table(dtest$Channel.6.mean, dtest$thrkrt5))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt5")
+   print(p)
+   ####
+   n=as.data.frame.matrix(table(dtest$Channel.7.mean, dtest$thrkrt8))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt8")
+   print(p)
+   ###
+   n=as.data.frame.matrix(table(dtest$Channel.9.mean, dtest$thrvim))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Vim")
+   print(p)
+  ###
+   
+dev.off()
+```
+
+```{r}
+qs::qsave(dtest,paste0(RDatadir, "/Thresholded_matrix_Binarized_Part1_WithNewData.qs"))
+tmp=dtest
+```
+
+
+################ ALREADY THRESHOLDED CHANNELS #################################
+
+Load the other markers to not threshold:
+```{r}
+nothreshold= paste0("Channel." ,c(4,5), ".mean")
+dtn= lapply(dl, function(x) {
+  x= x %>% dplyr::select(c(nothreshold,"Parent") )
+})
+for(i in seq_len(length(dtn))){
+  dtn[[i]]$sample= names(dtn[i])
+}
+dt= do.call(rbind, dtn)
+```
+
+Test thresholds:
+Vim:
+```{r}
+#Ki57:
+v= dt$Channel.5.mean
+
+d <- density(v)
+thr_ki67=  optimize(approxfun(d$x,d$y),interval=c(0, mean(v)))$minimum 
+```
+
+
+```{r}
+for(i in seq_len(length(dtn))){
+  dtn[[i]]$sample= names(dtn[i])
+  dtn[[i]]$Channel.4.mean= ifelse(dtn[[i]]$Channel.4.mean > 0, 1, 0)
+  dtn[[i]]$Channel.5.mean= ifelse(dtn[[i]]$Channel.5.mean > thr_ki67, 1, 0)
+  #dtn[[i]]$Channel.9.mean= ifelse(dtn[[i]]$Channel.9.mean > thr_vim, 1, 0)
+}
+dtestn= do.call(rbind, dtn)
+```
+
+Combine both matrices:
+Ch1=Hemato
+Ch2=Cdkn2a
+Ch3=Ecad
+Ch4=H3K27me3
+Ch5=Ki67
+Ch6=Krt5
+Ch7=Krt8
+Ch8=Ncad
+Ch9=Vim
+```{r}
+identical(rownames(dtest), rownames(dtestn))
+mat= cbind(dtest, dtestn)
+
+colskeep= colnames(mat %>% select(c(starts_with("Channel"), "Parent", "sample")))
+mat= mat %>% dplyr::select(colskeep)
+
+colnames(mat)= dplyr::recode(colnames(mat), "Channel.2.mean"="Cdkn2a"  ,"Channel.3.mean"="Ecad" , "Channel.6.mean"="Krt5", "Channel.7.mean"="Krt8", "Channel.8.mean"="Ncad",
+  "Channel.4.mean"="H3K27me3", "Channel.5.mean"="Ki67", "Channel.9.mean"="Vim"  )
+
+qs::qsave(mat, paste0(RDatadir, "/Final_Matrix_All_Binarized_Markers.qs"))
+
+qs::qsave(dtest, paste0(RDatadir, "/Final_Matrix_MarkersToThreshold.qs"))
+
+mat$name=paste0(mat$sample,"_", mat$Parent)
+qs::qsave(mat, paste0(RDatadir, "/Final_Matrix_All_Binarized_Markers.qs"))
+mat=qs::qread(paste0(RDatadir, "/Final_Matrix_All_Binarized_Markers.qs"))
+
+dtest=qs::qread( paste0(RDatadir, "/Final_Matrix_MarkersToThreshold.qs"))
+```
+
+
+
+Heatmap representation of the values:
+```{r}
+annot= data.frame("sample"= mat$sample, "Parent"= mat$Parent)
+rownames(annot)=rownames(mat)
+
+col= list()
+col$sample= c("#E41A1C", "#377EB8" ,"#4DAF4A", "#984EA3", "#FF7F00" ,"#FFFF33", "#A65628", "blue")
+names(col$sample)= unique(mat$sample)
+col$Parent= c("#966C6C", "#61C271", "#439993",  "#394C96", "#CC584E")
+names(col$Parent)= unique(mat$Parent)
+```
+
+##Try to combine the two matrices:
+```{r}
+pdf(paste0(outputDir, "/Heatmap_Binarized_NewF2.pdf"), height = 10, width = 14)
+p <- pheatmap::pheatmap(t(mat[, 1:8]), cluster_cols = FALSE, annotation_col = annot, annotation_colors = col, show_colnames = FALSE, color = c("grey", "black"))
+print(p)
+dev.off()
+##
+pdf(paste0(outputDir, "/Heatmap_Binarized_NewF2_Clustering_Subsample_BinaryClust.pdf"))
+g <- pheatmap::pheatmap(mat[sample(rownames(mat), round(2/3* nrow(mat))), 1:8], cluster_rows = TRUE, annotation_row = annot, annotation_colors = col, show_rownames = FALSE, show_colnames = TRUE,color = c("grey", "black") , clustering_method = "ward.D2", clustering_distance_cols = "binary")
+print(g)
+dev.off()
+```
+
+#############
+
+COL5A2, TGFBR2, CDH4, RBFOX3, MARK2, TFCP2L1, SL6A11, KCNK10, ETV6, TGFBR3, SULF1 et GATA4
+

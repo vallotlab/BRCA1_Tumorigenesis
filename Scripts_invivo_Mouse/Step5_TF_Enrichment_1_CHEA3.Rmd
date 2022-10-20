@@ -1,0 +1,240 @@
+---
+title: "Step5_TF_Enrichment_1_CHEA3"
+author: "Melissa"
+date: "18/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+RUN CHEA3 on the top overexpressed genes by the P16cycling population:
+```{r}
+seu= qs::qread(paste0(RDatadir,"/Epithelial_FinalAnnotation.qs"))
+p16= FindMarkers(seu, ident.1 = "P16+ Pre-lesional", ident.2 = "LP", only.pos = TRUE, logfc.threshold = 0.8, min.diff.pct = 0.2) %>% dplyr::filter(p_val_adj<0.05 )  %>% tibble::rownames_to_column("gene")
+##---------------------------####
+p16large= FindMarkers(epithelial, ident.1 = "LP_2", ident.2 = "LP_1", only.pos = TRUE, logfc.threshold = 0.5) %>% dplyr::filter(p_val_adj<0.01 )  %>% tibble::rownames_to_column("gene")
+
+
+
+##COMPARISON WITH LP:
+genes = p16$gene %>% toupper()
+
+url = "https://maayanlab.cloud/chea3/api/enrich/"
+encode = "json"
+payload = list(query_name = "myQuery", gene_set = genes)
+	#POST to ChEA3 server
+response = POST(url = url, body = payload, encode = encode)
+	json = httr::content(response, as="text")
+	#results as list of R dataframes
+results = fromJSON(json)
+dt= results[["Integrated--meanRank"]]
+dt$Score=as.numeric(as.character(dt$Score))
+dt$Rank=as.numeric(as.character(dt$Rank))
+
+writexl::write_xlsx(dt, paste0(cheaDir, "/Chea3_OverexpressedGenes_P16cyclingPop.xlsx"))
+```
+
+Work on the score:
+```{r}
+
+dt$Top=ifelse(dt$Score <= 54.59, "Top", "No")
+
+pdf(paste0(cheaDir, "/Fig1_Plot_Rank_logScore.pdf"))
+p <- dt %>% ggplot(aes(y= log(Score), x=Rank)) + geom_point() + theme_bw() + geom_hline(yintercept = 4, color= "red") 
+print(p)
+p <- dt %>% ggplot(aes(x= log(Score))) + geom_density() + theme_bw()
+print(p)
+
+p <- dt %>% ggplot(aes(y= log(Score), x=Rank)) + theme_bw() + geom_hline(yintercept = 4.2, color= "red")+
+  geom_text_repel(
+    data = subset(dt, Score <= 54.59),
+    aes(label = TF),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) + geom_point(aes(color = Top)) +
+  scale_color_manual(values = c( "grey","red"))
+print(p)
+dev.off()
+```
+
+Only for Top TFs:
+```{r}
+top_tf=dt$TF[1:31] %>% tolower() %>% Hmisc::capitalize()
+top_TF=dt[1:31,]
+#####
+tf.expression= PrctCellExpringGene(seu, genes= top_tf, group.by = "subtype" )
+tf.expressiona= PrctCellExpringGene(seu, genes= top_tf, group.by = "all" )
+tf.expressiona$rank= seq(1, nrow(tf.expressiona))
+df= tf.expression %>% filter(Feature== "P16+ Pre-lesional")
+
+tf.expressiona$isexpP16= ifelse(df$Cell_proportion > 0.2, "High_pct_Expression", "Low_pct_Expression")
+
+l=list("Percentage_Exp_Subtype"=tf.expression , "Percentage_Exp_All"=tf.expressiona, "OnlyPretumoralCells"= dt)
+writexl::write_xlsx(l,paste0(cheaDir, "/Chea3_TopTF_P16Cycling.xlsx"))
+```
+
+
+
+##---------- CREATE A GLOBAL DATASET-----------##
+```{r}
+df= tf.expression %>% filter(Feature== "P16+ Pre-lesional")
+df$TF= toupper(df$Markers)
+top_TF= merge(top_TF, df, by="TF")
+
+top_TF$Cell_proportion= ifelse(is.na(top_TF$Cell_proportion)==TRUE, 0, top_TF$Cell_proportion)
+###
+top_TF$isexpP16= ifelse(top_TF$Cell_proportion >= 0.1, "Expressed", "NotExpressed")
+
+top_TF$isexpP16= ifelse(is.na(top_TF$isexpP16)==TRUE, "NotExpressed", top_TF$isexpP16)
+
+pdf(paste0(outputDir, "/Barplot_Top30TF_P16cluster.pdf"))
+g <- top_TF %>% ggplot(aes(x= reorder(TF, Rank), y= Score, fill= isexpP16)) + geom_bar(stat="identity") + theme_bw() + scale_fill_manual(values= c("Expressed"="#4F568C", "NotExpressed"="#CDDBDE")) + coord_flip()
+print(g)
+dev.off()
+
+writexl::write_xlsx(top_TF, paste0(cheaDir, "/Top_TF_PretumoralCells_ExpressionPct.xlsx"))
+top_TF= readxl::read_excel(paste0(cheaDir, "/Top_TF_PretumoralCells_ExpressionPct.xlsx"))
+```
+
+
+Plot the score, Rank and percentage of expression:
+```{r}
+pdf(paste0(cheaDir, "/DotPlot_Top30Genes_CellProp_Rank_Score.pdf"))
+p <- top_TF %>% ggplot(aes(y= log(Score), x=Rank, size= Cell_proportion, color= Cell_proportion)) + theme_bw() + geom_hline(yintercept = 4.2, color= "red")+
+  geom_text_repel(
+    data = subset(top_TF, Score <= 54.59),
+    aes(label = TF),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) + geom_point() +
+  scale_color_viridis(option="B")
+print(p)
+dev.off()
+```
+
+
+```{r}
+pdf(paste0(cheaDir, "/Fig2_DotPlot_Top30Genes_CellProp_FC_Rank_Score.pdf"))
+
+p <- top_TF %>% ggplot(aes(y= log(Score), x=Rank, size= Cell_proportion, color= Cell_proportion)) + theme_bw() + geom_hline(yintercept = 4.2, color= "red")+
+  geom_text_repel(
+    data = subset(top_TF, Score <= 54.59),
+    aes(label = TF),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) + geom_point() +
+  scale_color_viridis(option="B")
+print(p)
+
+
+p <- top_TF %>% ggplot(aes(y= log(Score), x=Rank, size= avg_log2FC, color= avg_log2FC)) + theme_bw() + geom_hline(yintercept = 4.2, color= "red")+
+  geom_text_repel(
+    data = subset(top_TF, Score <= 54.59),
+    aes(label = TF),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) + geom_point() +
+  scale_color_viridis(option="B")
+print(p)
+
+p <- top_TF %>% ggplot(aes(y= log(Score), x=Rank, size= Cell_proportion, color= avg_log2FC)) + theme_bw() + geom_hline(yintercept = 4.2, color= "red")+
+  geom_text_repel(
+    data = subset(top_TF, Score <= 54.59),
+    aes(label = TF),
+    size = 3,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")) + geom_point() +
+  scale_color_viridis(option="B")
+print(p)
+
+dev.off()
+```
+
+Test2:
+```{r}
+res.dt= strsplit(dt$Overlapping_Genes[1:30],",")
+names(res.dt)= dt$TF[1:30]
+tmpdt <- do.call(rbind, res.dt)
+####
+tmpdt= apply(tmpdt, 1, function(x) replace(x, duplicated(x), 0)) %>% as.data.frame()
+```
+
+```{r}
+m= as.data.frame(t(tmpdt))
+m2=m %>% 
+  pivot_longer(
+    everything(), 
+    values_to="Value", 
+    names_to="Variable"
+  ) %>% 
+  group_by(Value, Variable) %>% 
+  summarise(N=plyr::n(), .groups="drop")%>% 
+  filter(!is.na(Value)) %>% 
+  pivot_wider(values_from=N, names_from=Variable, values_fill=0) %>% 
+  arrange(Value)
+
+m2= m2 %>% filter(! Value== 0)
+
+m3=dcast(m2, Value ~ Variable)
+```
+
+```{r}
+
+ m2=m %>% 
+   pivot_longer(
+     everything(), 
+     values_to="Value", 
+     names_to="Variable"
+   ) %>% 
+   group_by(Value, Variable)
+
+m3=dcast(m2, Value ~ Variable)
+m3= m3[-1,]
+m3= m3 %>% as.data.frame() 
+rownames(m3)= NULL
+m3=m3[-nrow(m3),]
+m3= m3 %>% column_to_rownames("Value")
+
+hmap <- Heatmap(
+  m3,
+  name = "TF_Targets_Chea3",
+  #col = blackwhite(75), 
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_distance_rows = "binary",
+  clustering_distance_columns  = "binary",
+ clustering_method_rows = "ward.D2",
+ clustering_method_columns = "ward.D2",
+  #width = unit(100, "mm"),
+  row_names_gp = gpar(fontsize = 10, fontfamily = "sans"),column_names_gp = gpar(fontsize = 10, fontfamily = "sans"))
+
+
+pdf(paste0(cheaDir, "/Heatmap_TF_Targets_Chea3.pdf"), height = 10, width = 12)
+draw(hmap, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+
+
+png(paste0(cheaDir, "/Heatmap_TF_Targets_Chea3.png"), height = 1000, width = 1200)
+draw(hmap, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+qs::qsave(m3, paste0(outputDir, "/Contingency_Matrix_TF_Target_Chea3.qs"))
+
+```
+
+

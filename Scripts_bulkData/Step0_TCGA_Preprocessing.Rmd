@@ -1,0 +1,72 @@
+---
+title: "Step0_TCGA_Preprocessing"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","TCGA","Global_Variables_TCGA.Rmd"), quiet=TRUE))
+```
+
+This first step allows to download TCGA PAN CANCER BREAST dataset using TCGA Biolinks
+
+##------------- LOAD THE METADATA, downloaded from C BIO PORTAL -----------------###
+
+```{r}
+tcga_br <- read.delim(paste0(inputDir,"/brca_tcga_pan_can_atlas_2018_clinical_data.tsv")) %>% as.data.frame()
+```
+
+To make sure the metadata and expression matreix matches, do the following:
+```{r}
+smp <- stringi::stri_sub(colnames(BRCAMatrix), from = 0, to= 15)
+length(intersect(smp, tcga_br$Sample.ID)) #1081
+##
+rm(smp)
+colnames(BRCAMatrix)=stringi::stri_sub(colnames(BRCAMatrix), from = 0, to= 15)
+##
+
+tcga_br = tcga_br %>% dplyr::filter(Sample.ID %in% colnames(BRCAMatrix))
+stopifnot(identical(tcga_br$Sample.ID, colnames(BRCAMatrix)))
+BRCAMatrix=BRCAMatrix[, tcga_br$Sample.ID]
+
+tcga_br$Subtype= ifelse(is.na(tcga_br$Subtype)== TRUE, "Undefined", tcga_br$Subtype)
+tcga_br$Neoplasm.Disease.Stage.American.Joint.Committee.on.Cancer.Code= ifelse(is.na(tcga_br$Neoplasm.Disease.Stage.American.Joint.Committee.on.Cancer.Code)== TRUE, "Undefined", tcga_br$Neoplasm.Disease.Stage.American.Joint.Committee.on.Cancer.Code)
+###
+plyr::count(tcga_br$Subtype)
+```
+
+
+##----------------- DOWNLOAD THE DATA FROM C BIO PORTAL --------------------##
+The data will be stored in input:
+```{r}
+listSamples= tcga_br$Sample.ID
+# Query platform Illumina HiSeq with a list of barcode 
+query <- TCGAbiolinks::GDCquery(project = "TCGA-BRCA", 
+                  data.category = "Gene expression",
+                  data.type = "Gene expression quantification",
+                  experimental.strategy = "RNA-Seq",
+                  platform = "Illumina HiSeq",
+                  file.type = "results",
+                  barcode = listSamples, 
+                  legacy = TRUE)
+
+# Download a list of barcodes with platform IlluminaHiSeq_RNASeqV2
+GDCdownload(query)
+
+# Prepare expression matrix with geneID in the rows and samples (barcode) in the columns
+# rsem.genes.results as values
+
+BRCARnaseqSE <- GDCprepare(query)
+qs::qsave(BRCARnaseqSE, paste0(inputDir, "/BRCARnaseqSE_initialData.qs"))
+```
+
+The data are now ready to be used in further steps

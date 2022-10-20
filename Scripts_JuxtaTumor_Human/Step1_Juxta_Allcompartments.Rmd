@@ -1,0 +1,140 @@
+---
+title: "Step1_Juxta_Allcompartments"
+author: "Melissa"
+date: "18/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+mainDir= mainDir= here::here()
+inputDir= file.path(mainDir, "input", "human", "snRNAseq", "juxtaTumor","filtered_matrices")
+outputDir= file.path(mainDir, "output", "human","snRNAseq", "juxtaTumor")
+#####################
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+DEdir <- file.path(outputDir, "DiffExp") ; if(!file.exists(DEdir)){dir.create(DEdir)}
+clustDir= file.path(outputDir, "Clustering") ; if(!file.exists(clustDir)){dir.create(clustDir)}
+cnvDir= file.path(outputDir, "CNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+```
+
+Read the files:
+```{r}
+input=list.dirs(inputDir)
+samplename=gsub(paste0(inputDir, "/"), "", input) 
+for (i in seq (1, length(input))) {
+  message(paste0("Creating Seurat Object for Sample: ", samplename[i]))
+  assign(samplename[i], CreateSeuratObject(Read10X(input[i]), project = samplename[i], min.cells = 20, min.features = 50)) 
+}
+gc()
+```
+
+
+```{r}
+seuratlist= mget(samplename)
+
+for(i in seq(1:length(seuratlist))){
+  seuratlist[[i]][["percent.mito"]] <- PercentageFeatureSet(seuratlist[[i]], pattern = "^MT-")
+}
+
+features= c("nCount_RNA", "nFeature_RNA", "percent.mito")
+pdf(paste0(QCdir, "/VlnPlot_Samples_BeforeQC.pdf") 
+   , height = 8, width = 8)
+ for(i in seq(1,5)){
+p=VlnPlot(seuratlist[[i]], features= features)
+print(p)
+ }
+ dev.off()
+```
+
+Merge them all;
+
+```{r}
+juxta <- merge(x=seuratlist[[1]], y=seuratlist[c(2: length(seuratlist))])
+
+juxta <- juxta %>% subset(., nFeature_RNA <= 6000 & nFeature_RNA >= 300 
+                            & nCount_RNA < 25000  
+                                  & percent.mito < 20) 
+
+obj.list <- SplitObject(juxta, split.by = "orig.ident")
+
+for(i in seq(1:length(obj.list))){
+  obj.list[[i]]=  SCTransform(obj.list[[i]], method = "glmGamPoi",  verbose = FALSE)  
+}
+
+juxta <- merge(x=obj.list[[1]], y=obj.list[c(2: length(obj.list))])
+
+VariableFeatures(juxta[["SCT"]])= rownames(juxta[["SCT"]]@scale.data)[-c(which(rownames(juxta[["SCT"]]@scale.data) %in% grep("^MT-", rownames(juxta[["SCT"]]@scale.data), value = TRUE)), which(rownames(juxta[["SCT"]]@scale.data) %in% grep("^RPL", rownames(juxta[["SCT"]]@scale.data), value = TRUE)),which(rownames(juxta[["SCT"]]@scale.data) %in% grep("^RPS", rownames(juxta[["SCT"]]@scale.data), value = TRUE)))]
+
+
+juxta= juxta %>% RunPCA( npcs = 60) 
+library(harmony)
+
+juxta= juxta %>% 
+    RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")   %>%  RunUMAP(., reduction= "harmony", dims= 1:40 ) %>% FindNeighbors(., reduction = "harmony", dims = 1:40) %>% FindClusters(., resolution = 1.0) 
+
+qs::qsave(juxta,paste0(RDatadir, "/Juxta_Integrated_Cohort1_Stroma.qs"))
+juxta=qs::qread(paste0(RDatadir, "/Juxta_Integrated_Cohort1_Stroma.qs"))
+```
+
+```{r}
+cols= met.brewer(name="Renoir",n=length(unique(juxta$orig.ident)),type="discrete")
+
+png(paste0(annotDir, "/UMAP_Integrated_Clusters.png"))
+p <- DimPlot(juxta, label = TRUE, pt.size = 1.5)
+p[[1]]$layers[[1]]$aes_params$alpha = 0.5
+print(p)
+dev.off()
+
+png(paste0(annotDir, "/UMAP_Integrated_Sample.png"))
+p <- DimPlot(juxta, label = F, group.by = "orig.ident", cols=cols, pt.size = 1.5)
+p[[1]]$layers[[1]]$aes_params$alpha = 0.5
+print(p)
+dev.off()
+```
+
+
+
+
+```{r}
+Idents(juxta)="seurat_clusters"
+DefaultAssay(juxta)="RNA"
+juxta=NormalizeData(juxta)
+
+markers <- FindAllMarkers(juxta, assay = "RNA", logfc.threshold = 0.9, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+topsm = markers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+Annotate the cells:
+```{r}
+juxta$annotation= juxta$seurat_clusters
+juxta$annotation= dplyr::recode(juxta$annotation, "0"= "Epithelial/Adipocytes" , "1"= "Epithelial/Adipocytes" , "2"= "Epithelial", "3"="Fibroblasts", "4"= "Immune", "5"= "Endothelial", "6"= "Epithelial", "7"="Endothelial", "8"= "Epithelial" , "9"= "Fibroblasts", "10"= "Fibtoblasts", "11"= "Immune", "12"="Endothelial")
+
+qs::qsave(juxta,paste0(RDatadir, "/Juxta_Integrated_Cohort1_Stroma.qs"))
+juxta=qs::qread(paste0(RDatadir, "/Juxta_Integrated_Cohort1_Stroma.qs"))
+```
+
+
+```{r}
+umap_custom <- as.data.frame(juxta[["umap"]]@cell.embeddings)
+
+metada_cells <- juxta$annotation
+metada_cells_col <- col_annotation[match(juxta$annotation,names(col_annotation))]
+
+draw <- sample(1:dim(umap_custom)[1])
+ 
+png(paste0(clustDir,"/UMAP_epith_MainType.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + theme(legend.position = "right") + NoAxes()
+print(p)
+dev.off()
+
+pdf(paste0(clustDir, "/Legend_UMAP_MainType.pdf"))
+g= as_ggplot(get_legend(DimPlot(juxta, group.by = "annotation", cols = col_annotation)))
+print(g)
+dev.off()
+```

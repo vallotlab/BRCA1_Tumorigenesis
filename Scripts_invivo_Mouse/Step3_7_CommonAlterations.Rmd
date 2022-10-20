@@ -1,0 +1,109 @@
+---
+title: "Step3_6_CommonAlterations"
+author: "Melissa"
+date: "04/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+ 
+```{r}
+l <- qs::qread(paste0(oaltDir, "/LP_Binary_Altered_Region.qs"))
+p <- qs::qread(paste0(oaltDir, "/P16_Binary_Altered_Region.qs"))
+a <- qs::qread(paste0(oaltDir, "/AVD_Binary_Altered_Region.qs"))
+lt <- qs::qread(paste0(oaltDir, "/LT_Binary_Altered_Region.qs"))
+mt <- qs::qread(paste0(oaltDir, "/MT_Binary_Altered_Region.qs"))
+st <- qs::qread( paste0(oaltDir, "/ST_Binary_Altered_Region.qs"))
+```
+
+Calculate  the percentage of cells that have the alteration:
+```{r}
+l$region=rownames(l)
+p$region=rownames(p)
+a$region=rownames(a)
+lt$region=rownames(lt)
+mt$region=rownames(mt)
+st$region=rownames(st)
+##########################
+l=l[,c(249,1:243)]
+p=p[,c(157,1:151)]
+a=l[,c(206,1:200)]
+st=st[,c(1435,1:1429)]
+mt=mt[,c(4081,1:4075)]
+lt=lt[,c(3509,1:3503)]
+########### Calculate the percentage of cells having alterations for each region
+per_l <- as.data.frame(rowSums(l[,-1])/ (ncol(l)-1) )
+per_a <- as.data.frame(rowSums(a[,-2])/ (ncol(a)-1) )
+per_p <- as.data.frame(rowSums(p[,-1])/ (ncol(p)-1) )
+per_st <- as.data.frame(rowSums(st[,-1])/ (ncol(st)-1) )
+per_mt <- as.data.frame(rowSums(mt[,-1])/ (ncol(mt)-1) )
+per_lt <- as.data.frame(rowSums(lt[,-1])/ (ncol(lt)-1) )
+##
+colnames(per_l)="Perc_Altered_Cells"
+colnames(per_a)="Perc_Altered_Cells"
+colnames(per_p)="Perc_Altered_Cells"
+colnames(per_lt)="Perc_Altered_Cells"
+colnames(per_mt)="Perc_Altered_Cells"
+colnames(per_st)="Perc_Altered_Cells"
+```
+
+Identify the commonly altered regions: present in more than 50% of cells: IN ALL:
+```{r}
+tpl <- per_l %>% arrange(desc(Perc_Altered_Cells)) %>% dplyr::filter(Perc_Altered_Cells > 0.35)
+tpp <- per_p %>% arrange(desc(Perc_Altered_Cells)) %>% dplyr::filter(Perc_Altered_Cells > 0.7)
+tplt <- per_lt %>% arrange(desc(Perc_Altered_Cells)) %>% dplyr::filter(Perc_Altered_Cells > 0.7)
+tpst <- per_st %>% arrange(desc(Perc_Altered_Cells)) %>% dplyr::filter(Perc_Altered_Cells > 0.7)
+tpmt <- per_mt %>% arrange(desc(Perc_Altered_Cells)) %>% dplyr::filter(Perc_Altered_Cells > 0.7)
+```
+
+```{r}
+comall <- Reduce(intersect, list(rownames(tpp), rownames(tplt), rownames(tpmt),rownames(tpst)))
+writeLines(comall, paste0(altDir, "/Common_Altered_Regions_More50percentpersample_NOT_LP.csv"), sep="\n")
+###
+res <- setdiff(comall, rownames(tpl))
+###
+res <- setdiff(rownames(tpl),comall)
+ intersect(rownames(tpl),comall)
+```
+
+See the pathways of the genes involved:
+```{r}
+g=gp[which(gp$region %in% c("chr16_qC1.1_qC1.1","chr4_qD2.3_qD2.3")),6]
+#####
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+pth <- m_t2g[which(m_t2g$gene_symbol %in% g),]  
+ 
+pg <- pth %>% group_by(gs_name)  %>% 
+     mutate(genePath = paste0(gene_symbol, collapse = ",")) 
+pg=pg[,c(1,3)] %>% as.data.frame()
+pg=pg[!duplicated(pg),]
+```
+
+Intersect with diff expr:
+```{r}
+DefaultAssay(epith)="RNA"
+tmp <- FindMarkers(epith, ident.2 = "P16+ Pre-lesional", ident.1 = "LP", logfc.threshold = 0.3, only.pos = T) %>% dplyr::filter(p_val_adj < 0.05)
+tmp$gene=rownames(tmp)
+s1=intersect(rownames(tmp), g)
+####
+p<- FeaturePlot(epith, features= s1[1:2],combine=F, pt.size = 3 )
+for(i in 1:length(p)) {
+  p[[i]] <- p[[i]] + scale_color_viridis(option="B",limits = c(0, 4), na.value= "grey",direction=-1) + NoLegend() + NoAxes() + ggtitle("")
+  p[i][[1]]$layers[[1]]$aes_params$alpha = 0.4}
+g <-cowplot::plot_grid(plotlist = p, ncol = 2) 
+
+ggsave(filename =paste0(figDir, "/UMAP_Epith_Genes_AlteredRegions_DEGP16_.png"), device = "png", plot = g, width = 400, height = 200, dpi = 500 , units = "mm") 
+```
+

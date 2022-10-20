@@ -1,0 +1,233 @@
+---
+title: "Step2_Pseudotime_2_PAGA_Python_R"
+author: "Melissa"
+date: "6/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here()
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+```{r}
+epith= qs::qread(paste0(RDatadir,"/Epithelial_FinalAnnotation.qs"))
+```
+
+
+##------------------SKIP THIS PART ---------------------------------------------------#######
+#--------------------------------------------------------------------------------------###
+#------------------------ LOAD THE SEURAT OBJECT ON R --------------------------------#
+
+Prepare the data for PAGA:
+```{r}
+seu= subset(epith, idents= c("LP","Avd","P16+ Pre-lesional", "Mki67+ ST","Cytl1+ ST","Trf+ ST","Spp1+ ST")) 
+
+seu$subtype <- factor(seu$subtype, levels=c("Avd","LP","P16+ Pre-lesional","Mki67+ ST","Cytl1+ ST","Trf+ ST","Spp1+ ST"))
+qs::qsave(seu, paste0(RDatadir, "/EpithelialSubset_forPseudotime.qs"))
+```
+
+Convert the seurat object to anndata object to be used by PAGA
+
+The Object is stored just in case:
+```{r}
+seu= qs::qread(paste0(RDatadir, "/EpithelialSubset_forPseudotime.qs"))
+
+sceasy::convertFormat(seu, from="seurat", to="anndata",
+ outFile=paste0(RDatadir,"/EpithelialSubset_forPseudotime_Anndata2_WOLHS.h5ad"))
+```
+
+
+#------------------------ RUN PAGA ON PYTHON --------------------------------#
+
+Now, select a python chunk and load the needed libraries
+```{python}
+import scanpy as sc
+import numpy as np
+import matplotlib.pyplot as pl
+import os
+import matplotlib as mb
+import pandas as pd
+sc.logging.print_versions()
+```
+
+Read the transformed ANNDATA object using scanpy
+```{python}
+adata= sc.read_h5ad(paste0(RDatadir,"/EpithelialSubset_forPseudotime_Anndata2_WOLHS.h5ad"))
+adata
+```
+
+Perform clustering 
+```{python}
+adata.obs.head()
+sc.pp.neighbors(adata,n_neighbors=15, n_pcs=40)
+```
+
+```{python}
+sc.tl.paga(adata, groups='subtype')
+adata.obs.head()
+```
+
+Make sure the annotation is correct by plottinh the expression levels of Elf5, Cdkn2a and others :
+```{python}
+sc.pl.paga(adata, color=[ "Elf5","Cdkn2a",], edge_width_scale=0.5, threshold=0.15,labels= None)
+```
+
+Run UMAP on the graph based object:
+```{python}
+sc.pl.umap(adata, color='subtype',  title='', frameon=False,edges=True, save= 'PAGA_UMAP_Edges_RMARK.pdf', legend_loc='right')
+```
+
+RUN PAGA, and set 0.15 a threshold to keep edges between nodes (cell types)
+```{python}
+sc.pl.paga(adata, threshold=0.15, edge_width_scale=1, layout='fr', random_state=1)
+```
+
+
+
+#------------------- LOAD PAGA RESULTS ON R TO MANUALLY DRAW THE PAGA GRAPH AND PERFORM STATS --------------#
+
+Need to have reticulate installed to be able to load python on r
+
+Creation of PAGA object on r:
+```{r}
+a=py$adata$uns$paga$connectivities
+## get PAGA POSITIONS AS WELL AS UMAP COORDINATES
+pos = py$adata$uns$paga$pos %>% data.frame()
+umap= py$adata$obsm["X_umap"] %>% data.frame()
+```
+
+
+
+```{r}
+paga <- list(
+  connectivities = py$adata$uns$paga$connectivities%>% reticulate::py_to_r() %>% data.frame(),
+  connectivities_tree =py$adata$uns$paga$connectivities%>% reticulate::py_to_r() %>% data.frame(),
+  group_name = levels(py$adata$obs$subtype),
+  groups = levels(py$adata$obs$subtype),
+
+  group_colors = cols, #cols are the named vector of the epithelial subtype
+  position = tibble(
+    group = levels(py$adata$obs$subtype),
+    x = pos$X1,
+    y = pos$X2
+  ),
+  umap = tibble(
+    UMAP_1 = umap$V1,
+    UMAP_2 = umap$V2
+  )
+)
+###
+rownames(paga$connectivities) <- c(1:nrow(paga$pos))
+colnames(paga$connectivities) <- c(1:nrow(paga$pos))
+seu@misc$paga <- paga
+```
+
+
+Save paga object:
+```{r}
+qs::qsave(paga, paste0(RDatadir, "/PAGA_object_WLHS.qs"))
+```
+
+###------------------- START HERE ----------------------------------##
+
+
+```{r}
+ epith_cols=qs::qread("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Backup/inVivo/Seurat/output/Epith_Cols_Subtype.qs")
+col=epith_cols
+paga <- qs::qread(paste0(RDatadir, "/PAGA_object_WLHS.qs"))
+paga$group_colors= col[paga$groups]
+```
+
+Create a table of the connectivities and keep only those higher than 0.15
+```{r}
+paga_edges <- tibble(
+  group1 = rownames(paga$connectivities)[row(paga$connectivities)[upper.tri(paga$connectivities)]],
+  group2 = colnames(paga$connectivities)[col(paga$connectivities)[upper.tri(paga$connectivities)]],
+  weight = paga$connectivities[upper.tri(paga$connectivities)]
+) %>%
+mutate(
+  x1 = paga$position$x[match(.$group1, rownames(paga$position))],
+  y1 = paga$position$y[match(.$group1, rownames(paga$position))],
+  x2 = paga$position$x[match(.$group2, rownames(paga$position))],
+  y2 = paga$position$y[match(.$group2, rownames(paga$position))]
+) %>%
+dplyr::filter(weight >=0.15)
+```
+
+Prepare the dataframe of edges weights 
+
+```{r}
+dpe= as.data.frame(paga_edges)
+
+dpe$group1= dplyr::recode(dpe$group1, "1"= levels(seu$subtype)[1],"2"= levels(seu$subtype)[2],"3"= levels(seu$subtype)[3],"4"= levels(seu$subtype)[4],"5"= levels(seu$subtype)[5],"6"= levels(seu$subtype)[6],"7"= levels(seu$subtype)[7],"8"= levels(seu$subtype)[8])
+##
+dpe$group2= dplyr::recode(dpe$group2, "1"= levels(seu$subtype)[1],"2"= levels(seu$subtype)[2],"3"= levels(seu$subtype)[3],"4"= levels(seu$subtype)[4],"5"= levels(seu$subtype)[5],"6"= levels(seu$subtype)[6],"7"= levels(seu$subtype)[7],"8"= levels(seu$subtype)[8])
+```
+
+```{r}
+nbr=merge(as.data.frame(table(dpe$group1)), as.data.frame(table(dpe$group2)), by= "Var1", all=T)
+nbr[is.na(nbr)] <- 0
+nbr$sum= nbr$Freq.x + nbr$Freq.y
+colnames(nbr)= dplyr::recode(colnames(nbr), "Var1"="group")
+nbr=nbr[,-c(2,3)]
+nbr$group=as.character(nbr$group)
+nbr=nbr[match(paga$position$group, nbr$group),]
+paga$position$sum=nbr$sum
+```
+
+
+
+Redo the PAGA plot by adjusting the size of the dots to the number of connections:
+```{r}
+paga[["position"]]$sum= ifelse(is.na(paga[["position"]]$sum)== TRUE, 0.5,paga[["position"]]$sum )
+
+p=ggplot(paga$position, aes(x, y)) +
+geom_segment(
+  data = paga_edges,
+  aes(x = x1, y = y1, xend = x2, yend = y2),
+  size = paga_edges$weight*4,
+  colour = "black",
+  show.legend = FALSE) +
+geom_point(data= as.data.frame(paga$position),aes(color = group, size= sum *500),  alpha = 1, show.legend = F) +
+scale_color_manual(values = col[paga$groups])+ #+ scale_size_manual(values=as.factor(sum)) +
+#geom_text(aes(label = group), color = "black", fontface = "bold") +
+theme_bw() +
+theme(
+  axis.title = element_blank(),
+  axis.text = element_blank(),
+  axis.ticks = element_blank(),
+  axis.line = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank())
+###
+pdf( paste0(pagaDir, "/PAGA_plot_res015.pdf"), height = 5, width = 5)
+print(p)
+dev.off()
+###Save the values to write on the file:
+colnames(paga$connectivities_tree)= paga$group_name
+writexl::write_xlsx( paga$connectivities_tree,paste0(pagaDir, "/PAGA_ValuesConnections_WriteOnPlot.xlsx"))
+```
+
+```{r}
+###
+pdf( paste0(RDatadir, "/New_PAGA_plot_res015.pdf"), height = 5, width = 5)
+print(p)
+dev.off()
+```
+
+
+Clean and remove the unused objects:
+```{r}
+rm(dpe); rm(nbr); rm(paga_edges); rm(paga)
+```
+
+

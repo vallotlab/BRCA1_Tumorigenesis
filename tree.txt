@@ -1,0 +1,56 @@
+.
+├── README
+├── Scripts_EMBO
+│   ├── 0_DataPreparation.Rmd
+│   ├── 1_Processing_EpithelialCompartment.Rmd
+│   ├── 2_Normal_Preneo_Comparison.Rmd
+│   ├── 3_Informativity_PCA.Rmd
+│   ├── 4_CNV_Inference.Rmd
+│   └── PC_informativity_Functions.Rmd
+├── Scripts_JuxtaTumor_Human
+│   ├── Step1_Juxta_Allcompartments.Rmd
+│   ├── Step2_Juxta_EpithelialCompartment.Rmd
+│   ├── Step3_Juxta_EpitheCompartment_inferCNV.Rmd
+│   └── Step4_TF_Enrichment.Rmd
+├── Scripts_MultiStaning
+│   ├── Step1_Thresholding.Rmd
+│   ├── Step2_DownstreamPlots.Rmd
+│   └── Step3_Sunburst_Plots.Rmd
+├── Scripts_bulkData
+│   ├── CPTAC_BREAST.Rmd
+│   ├── Global_Variables_TCGA.Rmd
+│   ├── Step0_TCGA_Preprocessing.Rmd
+│   ├── Step1_TCGA_Normalization.Rmd
+│   ├── Step2_TCGA_DiffExpression_Comparison.Rmd
+│   ├── Step3_TCGA_SignatureComparison.Rmd
+│   ├── Step4_TCGA_MetadataComparison.Rmd
+│   ├── Step5_TCGA_SurvivalAnalysis.Rmd
+│   ├── Step6_TCGA_P16Signature_Evaluation.Rmd
+│   └── Step7_TCGA_Signature_Association_Survival.Rmd
+├── Scripts_invivo_Mouse
+│   ├── Step0_1_Preprocessing_QC.Rmd
+│   ├── Step0_2_BRCA_ClusterAnnotation.Rmd
+│   ├── Step1_1_EpithelialCompartment_Annot.Rmd
+│   ├── Step1_2_DiffExpression_PEA.Rmd
+│   ├── Step2_3_Pseudotime_3_Slingshot_1_Inference.Rmd
+│   ├── Step2_Pseudotime_1_PHATE.Rmd
+│   ├── Step2_Pseudotime_2_PAGA_Python_R.Rmd
+│   ├── Step2_Pseudotime_3_Slingshot_2_PEA.Rmd
+│   ├── Step3_1_CNVInference.Rmd
+│   ├── Step3_2_CNVmatrixBinarization.Rmd
+│   ├── Step3_3_Alterations_PerChromosome.Rmd
+│   ├── Step3_4_ConcensusClustering.Rmd
+│   ├── Step3_5_IntraClusterCorrelation.Rmd
+│   ├── Step3_6_Hetmap_Alterations.Rmd
+│   ├── Step3_7_CommonAlterations.Rmd
+│   ├── Step4_Counting_MicroFoci_Orga_InVivo.Rmd
+│   ├── Step5_TF_Enrichment_1_CHEA3.Rmd
+│   ├── Step5_TF_Enrichment_2_SCENIC.Rmd
+│   ├── global_var_current.R
+│   └── invivo_Mouse_Stroma_Annotation.Rmd
+├── Tumor_BRCA_p53
+├── global_var_current.Rmd
+├── global_variables.Rmd
+├── scRNAseq_Functions.Rmd
+
+6 directories, 48 files

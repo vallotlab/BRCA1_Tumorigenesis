@@ -1,0 +1,435 @@
+---
+title: "Step4_TCGA_MetadataComparison"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir="C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","TCGA","Global_Variables_TCGA.Rmd"), quiet=TRUE))
+```
+
+
+
+```{r}
+tcga_br= readxl::read_xlsx(paste0(inputDir, "/Processed_Metadata.xlsx"))
+normalized_counts= qs::qread(paste0(RDatadir, "/Normalized_Counts_Matreix_BASALvsOthers.qs"))
+```
+
+
+
+Get only the TNBC patients
+```{r}
+tn <- tcga_br %>% dplyr::filter(Subtype=="BRCA_Basal")
+normtn= normalized_counts[, which(colnames(normalized_counts) %in% tn$Sample.ID)]
+dim(normtn)
+```
+
+```{r}
+dt <- normtn[rownames(normtn)%in% c("FN1", "ITGB1", "SERPINE2", "CDKN2A", "CDK4", "RB1","E2F1", "MKI67"),] %>% t() %>% as.data.frame()
+md = tcga_br %>% filter(Sample.ID %in% rownames(dt))
+dt=dt[md$Sample.ID,]
+stopifnot(identical(rownames(dt), md$Sample.ID))
+dt$type=md$Subtype
+```
+
+
+Test the stage of the disease:
+```{r}
+tnscores= scores %>% dplyr::filter(rownames(scores) %in% tn$Sample.ID)
+identical(rownames(tnscores), tn$Sample.ID)
+
+tnscores$stage= tn$Neoplasm.Disease.Stage.American.Joint.Committee.on.Cancer.Code
+
+tnscores$simplifiedStage= ifelse(tnscores$stage== "STAGE I"| tnscores$stage== "STAGE IA", "1",
+                                 ifelse(tnscores$stage== "STAGE II"| tnscores$stage== "STAGE IIA" | tnscores$stage== "STAGE IIB", "2", 
+                                  ifelse(tnscores$stage== "STAGE IIIA"| tnscores$stage== "STAGE IIIB" | tnscores$stage== "STAGE IIIC" , "3", "4")))
+##################
+tnscores=tnscores[which(is.na(tnscores$simplifiedStage)== FALSE),]
+tnscores= tnscores %>% filter(!simplifiedStage== "4")
+tnscores$simplifiedStage=as.factor(tnscores$simplifiedStage)    
+```
+
+```{r}
+pdf(paste0(SIGdir,"/Boxplot_P16Signature_UCell_logFC08_Diff02_Simplified_Disease_Stage.pdf"), height = 5, width = 5)
+ tnscores %>% ggplot(aes(x=simplifiedStage, y=p16UP_signature_UCell, fill= "grey")) + geom_boxplot(aes(x=simplifiedStage, y=p16UP_signature_UCell, fill=NULL))  +theme_bw(base_size = 12) + ylab("UCELL_Score_Up_Sigature_P16")  + theme(legend.position = "none")+ gtheme +geom_jitter(color="black", size=3, alpha=0.4, fill= "grey") +   stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "1",aes(label=..p.adj..))
+ dev.off()
+```
+```{r}
+writexl::write_xlsx(tnscores, paste0(RDatadir, "/Metadata_forSurvivalanalysis.xlsx"))
+writexl::write_xlsx(tn, paste0(RDatadir, "/Metadata_forSurvivalanalysis_OnlyBRCA_Basal.xlsx"))
+```
+
+####################################################################################################################
+### Compute BRCA1 Comparison:
+```{r}
+brca1_mutation <- read.delim("C:/Users/Melissa S/Downloads/alterations_across_samples (1).tsv")
+p16_mutation <- read.delim("C:/Users/Melissa S/Downloads/alterations_across_samples (2).tsv")
+brca2_mutation <- read.delim("C:/Users/Melissa S/Downloads/alterations_across_samples (3).tsv")
+
+stopifnot(identical(brca1_mutation$Sample.ID, brca2_mutation$Sample.ID))
+brca1_mutation=brca1_mutation[match( brca2_mutation$Sample.ID,brca1_mutation$Sample.ID),]
+p16_mutation=p16_mutation[match( brca1_mutation$Sample.ID,p16_mutation$Sample.ID),]
+stopifnot(identical(brca1_mutation$Sample.ID, p16_mutation$Sample.ID))
+####
+brca1_mutation$brca1alt= brca1_mutation$Altered
+brca2_mutation$brca2alt= brca2_mutation$Altered
+p16_mutation$p16alt= p16_mutation$Altered
+
+mutation= cbind(brca1_mutation$Sample.ID,brca1_mutation$brca1alt, brca2_mutation$brca2alt, p16_mutation$p16alt)
+mutation=as.data.frame(mutation)
+colnames(mutation)=c("Sample.ID", "BRCA1_alt", "BRCA2_alt", "P16_alt")
+
+metadata= merge(tcga_br, mutation, by="Sample.ID")
+#####
+DRD <- read.delim2("C:/Users/Melissa S/Downloads/alterations_across_samples (4).tsv")
+DRD=DRD[,1:16]
+DRD[,5:16]= apply(DRD[,5:16], 2, function(x) {ifelse(x== "no alteration", 0, 1)})
+#merge with the metadata:
+
+DRD= DRD %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  DRD$Sample.ID)
+DRD=DRD[match( scores$sample,DRD$Sample.ID),]
+stopifnot(identical(scores$sample, DRD$Sample.ID))
+scores= cbind(scores, DRD)
+
+```
+
+```{r}
+rownames(scores)=scores$sample
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+
+scores= cbind(scores, metadata)
+######################################
+scores$type_brca1= paste0(scores$subtype, "_", scores$BRCA1_alt)
+
+scores$type_brca2= paste0(scores$subtype, "_", scores$BRCA2_alt)
+
+
+scores %>%  ggplot(aes(x=type_brca1, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=subtype, y=p16UP_signature_UCell,color= type_brca1), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "BRCA_Basal",aes(label=..p.adj..))  +   gtheme 
+```
+
+```{r}
+rownames(scores)= scores$sample
+writexl::write_xlsx(scores, paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx"))
+```
+
+```{r}
+scores <- readxl::read_excel(paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")) %>% as.data.frame()
+
+DRD2 <- read.delim2("C:/Users/Melissa S/Downloads/alterations_across_samples (4).tsv")
+metadata=DRD2[,c(colnames(DRD2)[1:4],grep("HOMDEL", colnames(DRD2[,5:ncol(DRD2)]), value = TRUE))]
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+###
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+metadata=metadata[match( scores$sample,metadata$Sample.ID),]
+stopifnot(identical(scores$sample, metadata$Sample.ID))
+scores= cbind(scores, metadata)
+
+scores[,10:21]= apply(scores[,10:21], 2, function(x) {
+  ifelse(x== "no alteration", 0, 
+         ifelse(x== "AMP", 1, 
+                ifelse(x== "HOMDEL (driver)", (-1),
+                       NA)))})
+writexl::write_xlsx(scores, paste0(SIGdir, "/Metadata_Alterations_HRDgenes.xlsx"))
+```
+
+
+##### START WORKING ON THE GENETIC INFORMATION ##########################
+```{r}
+scores <- readxl::read_excel(paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")) %>% as.data.frame()
+DRD2 <- read.delim2("C:/Users/Melissa S/Downloads/alterations_across_samples (4).tsv")
+
+metadata=DRD2[,c(colnames(DRD2)[1:4],grep("HOMDEL", colnames(DRD2[,5:ncol(DRD2)]), value = TRUE))]
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+###
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+metadata=metadata[match( scores$sample,metadata$Sample.ID),]
+stopifnot(identical(scores$sample, metadata$Sample.ID))
+scores= cbind(scores, metadata)
+
+scores[,10:21]= apply(scores[,10:21], 2, function(x) {
+  ifelse(x== "no alteration", 0, 
+         ifelse(x== "AMP", 1, 
+                ifelse(x== "HOMDEL (driver)", (-1),
+                       NA)))})
+writexl::write_xlsx(scores, paste0(SIGdir, "/Metadata_Alterations_HRDgenes_Discrete.xlsx"))
+```
+
+Representation of the alterations: Method2
+```{r}
+
+scores <- readxl::read_excel(paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")) %>% as.data.frame()
+
+DRD2 <- read.delim2("C:/Users/Melissa S/Downloads/alterations_across_samples (6).tsv")
+
+metadata=DRD2[,1:8]
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+###
+metadata= metadata %>% dplyr::filter(Sample.ID %in% scores$sample)
+scores= scores %>% dplyr::filter(sample %in%  metadata$Sample.ID)
+metadata=metadata[match( scores$sample,metadata$Sample.ID),]
+stopifnot(identical(scores$sample, metadata$Sample.ID))
+scores= cbind(scores, metadata)
+
+scores[,10:13]= apply(scores[,10:13], 2, function(x) {
+  ifelse(x== "no alteration", 0, 
+         ifelse(x== "AMP", 1, (-1)))
+                })
+
+scores$BRCA1status= scores$BRCA1
+scores$BRCA1status= ifelse(scores$BRCA1status== (-1), "Alt", "NoAlt")
+scores$BRCAsubtype= ifelse(scores$subtype== "BRCA_Basal", paste0("Bsl_",scores$BRCA1status), gsub( "BRCA_", "",scores$subtype))
+#Do the same with BRCA2:
+scores$BRCA2status= scores$BRCA2
+scores$BRCA2status= ifelse(scores$BRCA2status== (-1), "Alt", "NoAlt")
+scores$BRCA2subtype= ifelse(scores$subtype== "BRCA_Basal", paste0("Bsl_",scores$BRCA2status), gsub( "BRCA_", "",scores$subtype))
+##  RAD51C
+scores$RAD51Cstatus= scores$RAD51C
+scores$RAD51Cstatus= ifelse(scores$RAD51Cstatus== (-1), "Alt", "NoAlt")
+scores$RAD51Csubtype= ifelse(scores$subtype== "BRCA_Basal", paste0("Bsl_",scores$RAD51Cstatus), gsub( "BRCA_", "",scores$subtype))
+##
+scores$TP53status= scores$TP53
+scores$TP53status= ifelse(scores$TP53status== (-1), "Alt", "No_p53Alt")
+scores$TP53subtype= ifelse(scores$subtype== "BRCA_Basal", paste0("Bsl_",scores$TP53status), gsub( "BRCA_", "",scores$subtype))
+```
+
+```{r}
+pdf(paste0(GENEdir, "/Boxplot_Alterations_HDRgenes_P16signatures_2.pdf"), height = 5, width = 5)
+
+scores %>%  ggplot(aes(x=BRCAsubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=BRCAsubtype, y=p16UP_signature_UCell,color= BRCAsubtype),size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_NoAlt",aes(label=..p.adj..))  + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..))  + themplot +gtheme + theme(legend.position = "none")
+#####
+scores %>%  ggplot(aes(x=BRCA2subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=BRCA2subtype, y=p16UP_signature_UCell,color= BRCA2subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_NoAlt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "none")
+###
+scores %>%  ggplot(aes(x=RAD51Csubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=RAD51Csubtype, y=p16UP_signature_UCell,color= RAD51Csubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "none")
+## CDK12
+scores %>%  ggplot(aes(x=scores$TP53subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=scores$TP53subtype, y=p16UP_signature_UCell,color= scores$TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "none")
+dev.off()
+```
+
+Create a combination between BRCA1/P53 mutations:
+```{r}
+scores$p53_BRCA1=paste0(scores$TP53subtype, "_", scores$BRCAsubtype)
+scores$p53_BRCA1= dplyr::recode(scores$p53_BRCA1, "LumA_LumA"= "LumA", "Her2_Her2"="Her2", "LumB_LumB"="LumB",               "Normal_Normal" ="Normal", "Bsl_Alt_Bsl_NoAlt"="Bsl_p53mBrca1","Bsl_Alt_Bsl_Alt"="Bsl_p53mBrca1m",         "Bsl_No_p53Alt_Bsl_NoAlt"= "Bsl_NoAlt", "Bsl_No_p53Alt_Bsl_Alt"= "Bsl_p53_Brca1m" )
+#############################################################
+
+pdf(paste0(GENEdir, "/P53_mutations_DNArepair_Genes.pdf"), height = 5, width = 7)
+scores %>%  ggplot(aes(x=BRCAsubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=BRCAsubtype, y=p16UP_signature_UCell,shape= TP53subtype, color= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "right") + ggtitle("TP53Alt from CBIO in BRCA1 alt")
+#####
+scores %>%  ggplot(aes(x=BRCA2subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=BRCA2subtype, y=p16UP_signature_UCell,shape= TP53subtype, color= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "right") + ggtitle("TP53Alt from CBIO in BRCA2 alt")
+
+scores %>%  ggplot(aes(x=RAD51Csubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=RAD51Csubtype, y=p16UP_signature_UCell,shape= TP53subtype, color= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +    themplot +gtheme + theme(legend.position = "right") + ggtitle("TP53Alt from CBIO in RAD51C alt")
+dev.off()
+```
+
+
+BRCANESS:
+```{r}
+scores$sample= gsub("-", "_", scores$sample)
+brca_data <- read_excel("C:/Users/Melissa S/Downloads/Sample_plan_clinical_patient_brca_NEW_celine_cut.xlsx")
+brca_data$sample_ID=   str_sub(brca_data$sample_ID,1,nchar(brca_data$sample_ID)-1)
+brca_data= brca_data %>% dplyr::filter(sample_ID %in% scores$sample)
+##ISOLATE BRCAness status:
+sub_brca= brca_data[, c(1,7,8,19,21,24)]
+scores= merge(scores, sub_brca, by.x= "sample", by.y="sample_ID")
+
+table(is.na(scores$BRCAness_code), scores$subtype)
+```
+
+Remove samples with NA values for BRCAness:
+```{r}
+dt2= scores[-which(is.na(scores$BRCAness_code== TRUE)),]
+
+pdf(paste0(SIGdir, "/Boxplot_BRCAness_code_Subtype_PANCANCER.pdf"), height = 5, width = 5)
+p <- dt2 %>% ggplot(aes(x= subtype, y= BRCAness_code)) + geom_boxplot() + gtheme + themplot
+print(p)
+dev.off()
+###
+dt2$BRCAnessBinary= ifelse(dt2$BRCAness_code == 0, "No_BRCAness", "BRCAness")
+
+dt2$BRCAnessSubtype= ifelse(dt2$subtype.x== "BRCA_Basal", paste0("Bsl_", dt2$BRCAnessBinary), gsub("BRCA_", "",dt2$subtype.x))
+
+```
+
+```{r}
+pdf(paste0(GENEdir, "/Boxplot_P16Signature_Pancancer_BRCAness.pdf"), height = 5, width = 5)
+dt2 %>%  ggplot(aes(x=BRCAnessSubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=dt2,aes(x=BRCAnessSubtype, y=p16UP_signature_UCell,color= BRCAnessSubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_BRCAness",aes(label=..p.adj..))  +    themplot  + theme(legend.position = "none")
+dev.off()
+```
+
+```{r}
+pdf(paste0(GENEdir, "/ScatterPlot_P16Signature_BRCAness_BRCA1alterations.pdf"), height = 10, width = 15)
+p <- dt2 %>% ggplot(aes(x=p16UP_signature_UCell , y=  BRCAness_code, fill=BRCAnessSubtype, col= BRCAnessSubtype)) + geom_point() + scale_color_manual(values=c("red", "blue", "grey", "grey", "grey", "grey")) + gtheme + themplot
+print(p)
+dev.off()
+```
+
+#Add the info on TP53 mutation:
+```{r}
+length(intersect(dt2$sample, scores$sample))
+scores$sample= gsub("-", "_", scores$sample)
+
+dt2= merge(dt2, scores, by="sample")
+```
+
+```{r}
+pdf(paste0(GENEdir, "/Boxplot_BRCAness_BRCA1Mutation_Thr0.pdf"), height = 5, width = 7)
+dt2 %>%  ggplot(aes(x=BRCAnessSubtype, y=p16UP_signature_UCell.x)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")    +geom_jitter(data=dt2,aes(x=BRCAnessSubtype, y=p16UP_signature_UCell.x,color= BRCAnessSubtype, shape= BRCAsubtype.x), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_BRCAness",aes(label=..p.adj..))  +    themplot  + theme(legend.position = "right")
+dev.off()
+```
+
+
+
+
+
+BRCA1_BRCA2_RAD51C_genetic_alteration:
+```{r}
+dt2$BRCA1_BRCA2_RAD51C_genetic_alteration= ifelse(is.na(dt2$BRCA1_BRCA2_RAD51C_genetic_alteration)==TRUE, "NotAltered", "Altered")
+
+
+dt2$HDRsubtype= ifelse(dt2$subtype=="BRCA_Basal", paste0("Bsl_", dt2$BRCA1_BRCA2_RAD51C_genetic_alteration), gsub( "BRCA_", "",dt2$subtype))
+###
+pdf(paste0(GENEdir, "/Boxplot_P16Signature_Pancancer_BRCA12RAD51_p53mut.pdf"), height = 5, width = 7)
+
+dt2 %>%  ggplot(aes(x=HDRsubtype, y=p16UP_signature_UCell.x)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=dt2,aes(x=HDRsubtype, y=p16UP_signature_UCell.x,color= HDRsubtype, shape= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..))  +    themplot  + theme(legend.position = "right") + ggtitle("BRCA1/2_RAD51C genetic alteration")
+dev.off()
+```
+
+
+Summary Proven HRD:
+```{r}
+dt2$Summary_provenHRD= ifelse(is.na(dt2$Summary_provenHRD)==TRUE, "NotAltered", "Altered")
+dt2$HDRsubtype= ifelse(dt2$subtype=="BRCA_Basal", paste0("Bsl_", dt2$Summary_provenHRD), gsub( "BRCA_", "",dt2$subtype))
+###
+pdf(paste0(GENEdir, "/Boxplot_P16Signature_Pancancer_ProvenHRD_P53mut.pdf"), height = 5, width = 5)
+
+dt2 %>%  ggplot(aes(x=HDRsubtype, y=p16UP_signature_UCell.x)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=dt2,aes(x=HDRsubtype, y=p16UP_signature_UCell.x,color= HDRsubtype, shape= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..))  +  stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..))  + themplot  + theme(legend.position = "none") + ggtitle("Summary_provenHRD")
+dev.off()
+```
+
+
+#--------------------------Add CDKN2A-----------------------------------##
+```{r}
+dt <- normalized_counts[rownames(normalized_counts)%in% c("FN1", "CDKN2A", "CDK4"),] %>% t() %>% as.data.frame()
+dt$sample= rownames(dt)
+dt$sample= gsub("-", "_", dt$sample)
+
+data= merge(dt, scores, by="sample")
+```
+
+
+```{r}
+pdf(paste0(SIGdir, "/Boxplot_CDKN2A_BRCAness_provenHRDsubtype_TP53.pdf"), height = 5, width = 5)
+data %>%  ggplot(aes(x=BRCAnessSubtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black") +  ylab("log10(CDKN2A)")  +geom_jitter(data=data,aes(x=BRCAnessSubtype, y=log10(CDKN2A),color= BRCAnessSubtype, shape= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_BRCAness",aes(label=..p.adj..))  +    themplot +gtheme + theme(legend.position = "none")
+#####
+
+data %>%  ggplot(aes(x=HDRsubtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black")   + ylab("log10(CDKN2A)")  +geom_jitter(data=data,aes(x=HDRsubtype, y=log10(CDKN2A),color= HDRsubtype, shape= TP53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..))  +  stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..))  + themplot  + theme(legend.position = "none") + ggtitle("Summary_provenHRD")
+
+dev.off()
+```
+```{r}
+pdf(paste0(GENEdir, "/Subtype_Brca1Mutation2_log10Cdkn2a.pdf"), height = 5, width = 5)
+
+data %>%  ggplot(aes(x=subtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("log10(CDKN2A)")  + geom_jitter(data=data,aes(x=subtype, y=log10(CDKN2A), color= BRCAsubtype, shape= BRCA1status), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_manual(values=c("red", "#A19999", "#C4BABA", "#C2BABA", "#D6D2D2", "#E8E8E8")) +  themplot   + ggtitle("Brca1 alterations")  + theme(legend.position = "none") #,shape= BRCAsubtype
+dev.off()
+
+x= data %>% dplyr::filter(subtype=="BRCA_Basal")
+x$logp16= log10(x$CDKN2A)
+
+stat.test <- x %>% 
+  wilcox_test(CDKN2A ~ BRCAsubtype) %>%
+  add_significance()
+stat.test
+```
+Subtype by BRCA1 mutation:
+```{r}
+pdf(paste0(GENEdir, "/Subtype_Brca1Mutation3.pdf"), height = 5, width = 5)
+data %>%  ggplot(aes(x=subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")   +geom_jitter(data=data,aes(x=subtype, y=p16UP_signature_UCell, color= BRCAsubtype, shape= BRCA1status), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_manual(values=c("red", "#A19999", "#C4BABA", "#C2BABA", "#D6D2D2", "#E8E8E8")) +  themplot   + ggtitle("Brca1 alterations_CompPval 0.036")  + theme(legend.position = "none") #,shape= BRCAsubtype
+dev.off()
+
+#compare the BRCA1 mutated vs Non-mutated 
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+x= data %>% dplyr::filter(subtype=="BRCA_Basal")
+stat.test <- x %>% 
+  wilcox_test(p16UP_signature_UCell ~ BRCAsubtype) %>%
+  add_significance()
+stat.test #pval: 0.0359
+```
+
+
+
+
+Focus on P53 mutation:
+```{r}
+data$p53mut= ifelse(is.na(data$TP53_mutation...24)== TRUE, "No_Alt", "Altered")
+data$p53mutsubtype= ifelse(data$subtype=="BRCA_Basal", paste0("Bsl_", data$p53mut), gsub( "BRCA_", "",data$subtype))
+####
+pdf(paste0(SIGdir, "/Boxplot_CDKN2A_P16signature_P53mutation.pdf"), height = 5, width = 5)
+data %>%  ggplot(aes(x=p53mutsubtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black") +  ylab("log10(CDKN2A)")  +geom_jitter(data=data,aes(x=p53mutsubtype, y=log10(CDKN2A),color= p53mutsubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..)) +themplot + theme(legend.position = "none")
+##
+data %>%  ggplot(aes(x=p53mutsubtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")   +geom_jitter(data=data,aes(x=p53mutsubtype, y=p16UP_signature_UCell,color= p53mutsubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Altered",aes(label=..p.adj..)) +themplot + theme(legend.position = "none")
+dev.off()
+```
+
+#########
+```{r}
+p53 <- read.delim("C:/Users/Melissa S/Downloads/alterations_across_samples (5).tsv")
+p53$Sample.ID= gsub("-","_", p53$Sample.ID )
+data= merge(data, p53, by.x="sample", by.y = "Sample.ID")
+data$TP53= ifelse(data$TP53=="no alteration", "No_Alt", "Alt")
+
+data$p53subtype= ifelse(data$subtype=="BRCA_Basal", paste0("Bsl_", data$TP53), gsub( "BRCA_", "",data$subtype))
+#####
+
+pdf(paste0(SIGdir, "/Boxplot_CDKN2A_P16signature_P53mutation_Cbioportal.pdf"), height = 5, width = 5)
+
+data %>%  ggplot(aes(x=p53subtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black") +  ylab("log10(CDKN2A)")  +geom_jitter(data=data,aes(x=p53subtype, y=log10(CDKN2A),color= p53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +themplot + theme(legend.position = "none") + xlab("TP53mutations_Cbio")
+##
+data %>%  ggplot(aes(x=p53subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")   +geom_jitter(data=data,aes(x=p53subtype, y=p16UP_signature_UCell,color= p53subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +themplot + theme(legend.position = "none") + xlab("TP53mutations_Cbio")
+dev.off()
+```
+
+```{r}
+length(intersect(scores$sample, data$sample))
+scores$sample= gsub("-", "_", scores$sample)
+rownames(scores)= scores$sample
+identical(rownames(scores), data$sample)
+scores= scores[data$sample,]
+data=cbind(data, scores[,-c(1:3,5:8)])
+data=data[,-c(28,29)]
+####
+pdf(paste0(SIGdir, "/Boxplot_CDKN2A_P16signature_P53_BRCA1mutation_Cbioportal.pdf"), height = 5, width = 7)
+
+data %>%  ggplot(aes(x=p53subtype, y=log10(CDKN2A))) + geom_boxplot( fill='#DBD8D8', color="black") +  ylab("log10(CDKN2A)")  +geom_jitter(data=data,aes(x=p53subtype, y=log10(CDKN2A),color= BRCAsubtype, shape= BRCAsubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +themplot + theme(legend.position = "none") + xlab("TP53mutations_Cbio")
+##
+data %>%  ggplot(aes(x=p53subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")   +geom_jitter(data=data,aes(x=p53subtype, y=p16UP_signature_UCell,color= BRCAsubtype, shape= BRCAsubtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey()+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Bsl_Alt",aes(label=..p.adj..)) +themplot + theme(legend.position = "none") + xlab("TP53mutations_Cbio")
+dev.off()
+```
+
+
+```{r}
+Diff_JT_hu= read_delim("C:/Users/Melissa S/Downloads/diffAnalysis_data_JT_Human_Integr_200_617665_99_batchCorrected_12_0.01_1_one_vs_rest_fast.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+Diff_JT_hu=Diff_JT_hu %>% dplyr::filter(top_feature==TRUE)
+lfc= colnames(Diff_JT_hu %>% dplyr::select(starts_with("logFC")))
+
+lfcd= Diff_JT_hu %>% dplyr::select(lfc)
+lfcd$gene= Diff_JT_hu$Gene
+
+```
+

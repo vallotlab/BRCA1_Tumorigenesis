@@ -1,0 +1,538 @@
+---
+title: "Step1_3_EpithelialCompartment_Annot"
+author: "Melissa"
+date: "6/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+#################SKIP ALL THIS PART IF YOU WANT TO GENERATE UMAPS ###################################
+Load the finally annotated BRCA:
+```{r}
+brca= qs::qread(paste0(RDatadir, "/BRCA_SCT_1k10k.qs"))
+#path does not work, currently qs files are in the RDatadir of the in vivo folder not the general one of the output
+```
+
+ The aim of this part was to focus only on the epithelial compartment and conduct a subclustering and a refined annotation of the clusters
+
+To avoid false positives, we did not consider the small clusters annotated as epithelial
+AnnotFinal is a dataframe from the previous step in which we kept the assigned cell type to each cell cluster
+
+```{r}
+#NOT KEEP THE SMALL CLUSTERS AS EPITHELIAL
+annot.final[which(annot.final$type=="Epithelial"),5]
+#Keep only the clusters which were epithelial and not small
+Idents(brca)="seurat_clusters"
+epith2= subset(brca, idents = c(0:2,4:11,17,18,23 ))
+epith2=DietSeurat(epith2)
+
+epith2= epith2  %>%SCTransform(., method = "glmGamPoi",  verbose = FALSE) %>% RunPCA(., npcs = 60)  %>% RunUMAP(., reduction= "pca", dims= 1:60 ) %>% FindNeighbors(., reduction = "pca", dims = 1:60) %>% FindClusters(., resolution = 1.4, group.singletons = T) 
+##########
+Idents(epith2)="seurat_clusters"
+epith3= subset(epith2, idents=c(1:18,20))
+#test1: KEEP TEST1
+epith3= epith3  %>% RunPCA(., npcs = 60)  %>% RunUMAP(., reduction= "pca", dims= 1:60 ) %>% FindNeighbors(., reduction = "pca", dims = 1:60) %>% FindClusters(., resolution = 1.4,group.singletons = F)
+epith=epith3
+```
+
+###IF YOU WANT TO GENERATE THE FIGURES START FROM HERE ######################################
+
+ #------------------- PLOT EPITHELIAL MARKERS ON THE EPITHELIAL SUBSET -----------------#
+ 
+ Map representation:
+ 
+```{r}
+DefaultAssay(epith)="RNA"
+epith=NormalizeData(epith)
+
+pdf(file = paste0(annotDir, "/Umap_Epithelial_SubtypeMarkers_1k10k.pdf"),  
+    width = 20, 
+    height = 20)
+for(i in seq(1, length(epithgenes))){
+  p=FeaturePlot(epith, features=epithgenes[[i]], pt.size = 1) + gtheme 
+  print(p)
+}
+dev.off()
+```
+
+
+#--------------- IN DEPTH CHARACTERIZATION OF THE MARKERS AND CELL CLUSTERS --------------#
+
+In depth annotation of the cell clusters in the epithelial compartment:
+
+
+Subset cluster 10 and 16
+```{r}
+DefaultAssay(epith)="SCT"
+epith=Seurat::FindSubCluster(epith, cluster = 10, graph.name = "SCT_snn", algorithm = 1, subcluster.name = "sub11", resolution = 0.2)
+epith=Seurat::FindSubCluster(epith, cluster = 16, graph.name = "SCT_snn", algorithm = 1, subcluster.name = "sub17", resolution = 0.1)
+epith$subcluster= ifelse(epith$sub10== 16, epith$sub17, epith$sub11)
+```
+
+Check the top expressed genes per subcluster to further perform a refined annotation
+
+```{r}
+DefaultAssay(epith)="RNA"
+Idents(epith)="subcluster"
+
+lmarkers <- FindAllMarkers(epith, only.pos = TRUE, logfc.threshold = 0.9 ) 
+markers=lmarkers
+
+lmarkers= lmarkers%>% dplyr::filter(.,p_val_adj<0.05 )
+## take the top 10 Most Upregulated genes per cluster as compared to all:
+top10 <-lmarkers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+##Write the results on a sheet:
+mylist= list(lmarkers,top10 )
+names(mylist)= c("Epithelial_1vsAll_Subclusters","Top10_Epithelial_1vsAll_Sub")
+#Save Workbook
+writexl::write_xlsx(mylist, paste0(clustDir,"/DEG_Epithelial_SubclusterID_1vsAll_logFC0.5_FinalCorrected.xlsx"))
+rm(mylist)
+gc()
+```
+
+
+
+Simplify the tumorsize variable to use it in the annotation:
+```{r}
+epith$id= epith$tumorsize
+epith$id= dplyr::recode(epith$id, "WT_PrimaryLesions"="CTRL_PreCancerous",
+                        "LargeTumor"=  "LT",     
+                        "MediumTumor"=  "MT",    
+                        "SmallTumor"= "ST")
+```
+
+#------------------------------ EPITHELIAL COMPARTMENT ANNOTATION FUNCTION --------------------------------#
+
+Take the top genes per cluster ID, group the genes per cluster 
+```{r Annotation Function}
+#nbrtab=as.data.frame.matrix( table(epith$subcluster, epith$id))%>% as.data.frame()
+nbr=as.data.frame(table(epith$subcluster, epith$id)) %>%    group_by(Var1) %>%   slice_max(Freq) %>% as.data.frame()
+
+topgenes=lmarkers[which(lmarkers$pct.1 >= 0.4),c(2,6,7)]
+
+##Exclude unwanted genes:
+topgenes= topgenes %>% dplyr::filter(!gene  %in% grep("^mt-", topgenes$gene, value = T)) %>% dplyr::filter(!gene  %in% grep("^Gm", topgenes$gene, value = T))  %>% dplyr::filter(!gene  %in% grep("^AC[0-9]{1,6}", lmarkers$gene, value = T)) %>% arrange(desc(avg_log2FC)) %>% distinct(gene,.keep_all = TRUE)
+
+#####rank per foldchange:
+topgenes = topgenes %>% group_by(cluster) %>% arrange(desc(avg_log2FC), .by_group = T) %>% dplyr::slice(1:50, .preserve = T) 
+##
+
+#####ssemble the top genes per cluster to get string vectors of genes:
+topgenes=aggregate(gene ~., topgenes[,-1], toString)
+#######
+nbr$Var1=as.character(nbr$Var1)
+nbr=nbr[match(topgenes$cluster,nbr$Var1),]
+stopifnot(all(nbr$Var1== topgenes$Group.1))
+topgenes$tumsize=nbr$Var2
+```
+
+
+```{r Annotation automation}
+topgenes$name= rep(NA, nrow(topgenes))
+##
+for (i in seq(1:nrow(topgenes))){
+  if (length(intersect(c("Krt5","Acta2", "Krt14"),unlist(strsplit(topgenes$gene[i], split = ", ")))) > 2){
+      topgenes$name[i]= "Basal"
+  }
+  if (length(intersect(c("Csn2", "Csn1s1", "Lalba", "Ltf"),unlist(strsplit(topgenes$gene[i], split = ", ")))) > 2){
+    topgenes$name[i]= "Avd"
+  }
+  if (length(intersect(c("Prlr", "Ptn", "Cited1"),unlist(strsplit(topgenes$gene[i], split = ", ")))) > 2){
+    topgenes$name[i]= "Luminal H-S"
+  }
+  if (length(intersect(c("Aldh1a3", "Fcgbp", "Elf5", "Kit","Cited4"),unlist(strsplit(topgenes$gene[i], split = ", ")))) > 1){
+    topgenes$name[i]= "LP"
+  }
+  
+  if (length(intersect(c("Ccnd2","Mki67", "Lars2"),unlist(strsplit(topgenes$gene[i], split = ", ")))) >= 2){
+      topgenes$name[i]= paste0("Mki67+ " ,topgenes$tumsize[i])
+  }
+  
+  if( topgenes$tumsize[i]=="CTRL_PreCancerous"){
+    topgenes$name[i]= "P16+ Pre-lesional"
+  }
+ 
+  else if(is.na(topgenes$name[i]) ){
+    topgenes$name[i]=paste0(unlist(strsplit(topgenes$gene[i], split = ", "))[1],"+ ", topgenes$tumsize[i])
+  }
+}
+
+```
+
+```{r}
+### save the object:
+#qs::qsave(topgenes, paste0(clustDir, "/Epithelial_Topgenes_Cluster_AutomatiAnnotation.qs"))
+write.csv(topgenes,paste0(clustDir, "/Epithelial_Topgenes_Cluster_AutomatiAnnotation.csv") )
+rm(nbr)
+gc()
+```
+
+
+#-------------- Rename qsUBCLUSTER ANNOTATION ---------------------------#
+Annotate the subclusters using the expression markers:
+```{r}
+Idents(epith)="subcluster"
+subtype= topgenes$name
+names(subtype)= as.character(topgenes$cluster)
+epith=RenameIdents(epith, subtype)
+epith$subtype= Idents(epith)
+```
+
+#-------------------------------------- DRAW UMAPS FOR THE MANUSCRIPT -------------------------- ##
+Redo the UMAP using manually defined colors:
+```{r}
+# Set the colors 
+Idents(epith)="subtype"
+levels(Idents(epith))
+grey= c("#656565" , "#555555","#454545","#808080" , "#737373","#C8C8C8","#A4A4A4", "#D9D5D5", "#D9CECE") #MT
+pink= c("#8068AE","#D23C78","#BC4399","#9E55A3")   #  #ST
+preles= "#ACEB0E"
+normal=c("#1B9E77" ,"#4D8D58" , "#7F7C39" , "#B06C1A")
+blue= c("#70B0D7","#529BCB", "#61A7D2") #LT ,"#1D6AAD"
+
+# Relevel the data to fit the colors
+levels(Idents(epith))= c("Basal","Luminal H-S",  "Avd" ,"LP", "P16+ Pre-lesional", "Mki67+ ST","Cytl1+ ST", "Fgf8+ ST",  "Spp1+ ST","Krt7+ MT" ,"Odc1+ MT","Col1a2+ MT","Dcn+ MT", "S100a4+ MT", "Uck2+ MT","Klf2+ MT" ,"Meis2+ LT","Clu+ LT","Mgp+ LT","Apod+ LT")
+col= c(normal, preles,pink,grey,blue)
+names(col)=levels(Idents(epith))
+###
+brca_cols$col=col
+qs::qsave(brca_cols, paste0(RDatadir, "/BRCA_ColorList.qs"))
+```
+
+
+START HERE TO REMAKE THE UMAP PLOTS
+```{r}
+epith= qs::qread(file= paste0(RDatadir, "/Epithelial_FinalAnnotation.qs"))
+#same as above, path is not correct
+```
+
+
+
+#------------ FIG 1 ------------------#
+
+Umap - Sample :
+```{r}
+Idents(epith)="sample"
+#levels(Idents(epith)) <- c("Control_Cre+2.7M", "Control_Cre+3M" ,  "Control_Cre+5.2M","T99","T94", "T_6413" )
+
+png(paste0(annotDir, "/UMAP_Epith_WOLegend_Sample.png"), height=1000, width = 1000,res=300)
+p <- DimPlot(epith, cols=brca_cols$sample, label = F, repel = F, label.box = F, pt.size = 2)  + NoAxes() + ggtitle("") + NoLegend()
+p[[1]]$layers[[1]]$aes_params$alpha = 1
+p[[1]]$layers[[1]]$aes_params$shape=21
+print(p)
+dev.off()
+
+
+##Other representation with non transparent circles, need shuffling to have a representation of all
+umap_custom <- as.data.frame(epith[["umap"]]@cell.embeddings)
+metada_cells <- epith$sample
+metada_cells_col <- brca_cols$sample[match(epith$sample,names(brca_cols$sample))]
+
+draw <- sample(1:dim(umap_custom)[1])
+
+png(paste0(annotDir,"/UMAP_epith.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + theme(legend.position = "right")
+print(p)
+dev.off()
+ 
+
+###
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 2, shape = 21,alpha=1) + theme_classic() + theme(legend.position = "right") + scale_fill_manual(values= brca_cols$sample)
+## Save the legend ###
+ leg <- as_ggplot(get_legend(p))
+pdf(file = paste0(annotDir, "/LEGEND_Umap_Epithelial_SUBTYPE_New.pdf"), width = 10, height = 10)
+  print(leg)
+dev.off()
+```
+
+
+#------------ FIG 1 ------------------#
+
+Umap: Subtype
+```{r}
+Idents(epith)="subtype"
+png(paste0(annotDir, "/UMAP_Epith_WOLegend_Subtype.png"), height=1000, width = 1000,res=300)
+p <- DimPlot(epith, cols=col, label = FALSE, repel = FALSE, label.box = FALSE, pt.size = 0.75)  + NoAxes() + ggtitle("") +NoLegend()
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+print(p)
+dev.off()
+
+
+##Other representation with non transparent circles, need shuffling to have a representation of all
+umap_custom <- as.data.frame(epith[["umap"]]@cell.embeddings)
+metada_cells_col <- brca_cols$col[match(epith$subtype,names(brca_cols$col))]
+draw <- sample(1:dim(umap_custom)[1])
+
+png(paste0(annotDir,"/UMAP_epith_cluster.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() 
+print(p)
+dev.off()
+###
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 2, shape = 21,alpha=1) + theme_classic() + theme(legend.position = "right") + scale_fill_manual(values= brca_cols$col)
+
+  ## Save the legend ###
+ leg <- as_ggplot(get_legend(p))
+pdf(file = paste0(annotDir, "/LEGEND_Umap_Epithelial_SUBTYPE_N.pdf"), width = 10, height = 10)
+  print(leg)
+dev.off()
+```
+
+
+#------------------------- FIG1 ---------------------#
+Donut plot of the distribution of P16 origin:
+```{r}
+m <- epith@meta.data %>% dplyr::filter(subtype== "P16+ Pre-lesional")
+m= m[, c(9,21)] %>% as.data.frame()
+###
+
+m1 = m %>%
+  group_by(sample)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(sample)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+m1$sample=as.factor(m1$sample)
+
+p <- ggplot(data = m1, 
+       aes(x = 2, y = percentage, fill = sample))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values=brca_cols$sample)+
+  xlim(.2,2.5)
+##
+pdf(paste0(annotDir, "DonutPlot_P16_Origin.pdf"), height = 5, width = 7)
+print(p)
+dev.off()
+rm(m)
+rm(m1)
+gc()
+```
+
+
+
+Donut plot with all the controls:
+```{r}
+############CONTROLS ############
+dt <- data.frame("subtype"= epith$subtype, "sample"= epith$orig.ident) %>% dplyr::filter( sample %in% c("Control_Cre_2.7M" ,"Control_Cre_3M", "Control_Cre_5.2M" ))
+
+dt$subtype= ifelse(dt$subtype %in% grep("*T", dt$subtype, value = T), "pseudonormal", dt$subtype)
+dt$subtype= dplyr::recode(dt$subtype, "1"="Basal", "2"= "Luminal H-S", "3"="Avd", "4"="LP", "5"= "P16+ Pre-lesional")
+```
+
+```{r}
+for( samp in unique(dt$sample)){
+dt1<-  dt %>% dplyr::filter(sample== samp)
+dt1 = dt1 %>%
+  group_by(subtype)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(subtype)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+dt1$subtype=as.factor(dt1$subtype)
+levels(dt1$subtype)=c( "Basal","Luminal H-S", "Avd","LP", "P16+ Pre-lesional", "pseudonormal")
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = subtype))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values=c(col, "#A4A4A4"))+
+  xlim(.2,2.5)
+pdf(paste0(annotDir, "/DonutPlot_distrib_Subtypes_in_",samp,".pdf"), height = 5, width = 7)
+print(p)
+dev.off()
+}
+```
+
+Donut plot with all the tumors to check their sample of origin:
+```{r}
+############TUMORS ######################
+dt <- data.frame("subtype"= epith$subtype, "sample"= epith$orig.ident) %>% dplyr::filter( sample %in% c("T6413" , "T94","T99" ))
+dt$subtype= ifelse(dt$subtype %in% grep("*T", dt$subtype, value = T), "tumoral", dt$subtype)
+dt$subtype= dplyr::recode(dt$subtype, "1"="Basal", "2"= "Luminal H-S", "3"="Avd", "4"="LP", "5"= "P16+ Pre-lesional")
+dt$sample=rep("Tum", nrow(dt))
+```
+
+```{r}
+for( samp in unique(dt$sample)){
+  
+dt1<-  dt %>% dplyr::filter(sample== samp)
+
+dt1 = dt1 %>%
+  group_by(subtype)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(subtype)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+dt1$subtype=as.factor(dt1$subtype)
+#levels(dt1$subtype)=c( "Basal","Luminal H-S", "Avd","LP", "P16+ Pre-lesional", "tumoral")
+
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = subtype))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values=c(col[levels(dt1$subtype)[-length(levels(dt1$subtype))]], "#A4A4A4"))+
+  xlim(.2,2.5)
+
+pdf(paste0(annotDir, "/New_DONUT_WithLegend_Tumors",samp,".pdf"), height = 5, width = 7)
+print(p)
+dev.off()
+}
+```
+
+#--------------------- FIG 1 -----------------------#
+
+Create Meta-Subtype:
+```{r}
+epith$metaSub= epith$subtype
+epith$metaSub = str_sub(epith$metaSub, -3,-1)
+epith$metaSub= dplyr::recode(epith$metaSub,"sal"="Basal",
+                             "nal"= "P16+ Pre-lesional",
+                             " LT"="LT",
+                             " ST"="ST",
+                             " MT"="MT")
+```
+
+
+Barplot CC Phase per meta sample:
+```{r}
+Idents(epith)= "Phase"
+#relevel the Phase idents to make sure it matches with the Phase colors from brca_cols:
+levels(Idents(epith)) <- c("G1","S","G2M")
+dt4 <- as.data.frame(table(epith$Phase,epith$metaSub))
+dt4$Var2= factor(dt4$Var2, levels = c("Basal", "H-S", "LP", "Avd","P16+ Pre-lesional","ST","MT","LT"))
+
+png(paste0(annotDir, "/BARPLOT_CCPHASE_EPITH.png"), height=1000, width = 1000,res=300)
+p <- ggplot(dt4 ,aes(x= Var2, y= Freq, fill= Var1))+ 
+  geom_bar(stat="identity", position = "fill",show.legend = F,col="black",width=0.8) + scale_fill_manual(values=brca_cols$Phase) + themplot + gtheme + theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 45, hjust = 1)) + xlab("") + ylab("")
+print(p)
+dev.off()
+
+# Save the legend as well
+ leg <- as_ggplot(get_legend(p))
+pdf(file = paste0(annotDir, "/LEGEND_PHASE_BARPLOT.pdf"), width = 10, height = 10)
+  print(leg)
+dev.off()
+```
+
+
+
+
+Compare the distribution of CC PHases among the samples , to highlight that p16+ cells are as cycling as the tumor samples:
+```{r}
+df <- xtabs(Freq~Var1+Var2, data = dt4)
+```
+
+```{r}
+### Compute pairwise Chi2 test:
+ #dt <-aggregate(dt4[,3],by=list(dt4$Var1), FUN= sum) %>% column_to_rownames(., "Group.1")
+
+cmb=combn(x= colnames(df), 2) %>% as.data.frame()
+
+for(i in seq(1, ncol(cmb))){
+  res=fisher.test(df[,cmb[1:2,i]],workspace=2e8)$p.value
+  cmb[3,i] = res
+}
+##
+cmb[4,]=p.adjust(cmb[3,], method = "bonferroni", n = ncol(cmb))
+rownames(cmb)=c("subtype1", "subtype2","p_val","adjust_pval")
+write.csv(cmb, paste0(annotDir, "/Fischer_Phase_Comparison.csv"))
+gc()
+```
+
+
+#--------- UMAP 
+
+
+
+###Create a subset of the UMAP :
+
+```{r}
+#seu= qs::qread(paste0(RDatadir, "/Transitioning_Seurat_WPhate.qs"))
+Idents(epith)="subtype"
+seu=subset(epith, idents= c("LP","Avd","P16+ Pre-lesional","Cytl1+ ST","Fgf8+ ST","Spp1+ ST", "Mki67+ ST" ))
+
+levels(seu) = c("LP","Avd","P16+ Pre-lesional","Mki67+ ST","Cytl1+ ST","Fgf8+ ST","Spp1+ ST" )#"Luminal H-S",
+```
+
+
+```{r}
+Idents(epith)="subtype"
+png(paste0(annotDir, "/UMAP_Subset_Epith_SUBTYPE.png"), height=1000, width = 1000,res=300)
+p <- DimPlot(seu, cols=col[levels(Idents(seu))], label = F, repel = F, label.box = F, pt.size = 0.75)  + NoAxes() + ggtitle("") +NoLegend()
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+print(p)
+dev.off()
+
+##Other representation with ggplot
+##WHy is not the same embedding, just zoomed and with cells selected for, seu object gives a slightly different selection of cells
+sel <- epith$subtype %in% c("LP","Avd","P16+ Pre-lesional","Cytl1+ ST","Fgf8+ ST","Spp1+ ST", "Mki67+ ST" )
+
+png(paste0(annotDir,"/UMAP_epith_cluster_zoom.png"),height=2000, width = 2000,res=300)
+p <- ggplot(umap_custom[sel,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2, stroke=0.5, shape = 21,fill = metada_cells_col[sel],alpha=1) + theme_classic() + ylim(-15,5) + xlim(-10,5)
+print(p)
+dev.off()
+
+
+
+  ## Save the legend ###
+ leg <- as_ggplot(get_legend(p))
+pdf(file = paste0(annotDir, "/LEGEND_UMAP_Subset_Epith_SUBTYPE.pdf"), width = 10, height = 10)
+  print(leg)
+dev.off()
+
+rm(seu)
+```
+
+
+Dot plot of the main markers:
+
+```{r}
+ pdf(paste0(annotDir, "/DotPlot_Epith_Markers.pdf"), height = 10, width = 10)
+ DotPlot(epith, features= c("Krt5", "Prlr","Csn2","Elf5","Aldh1a3","Cdkn2a","Meis2", "Mki67","Clu", "Cytl1", "Fgf8","Spp1","Apod","Mgp","Krt7","Odc1","Col1a2","Dcn","S100a4", "Uck2", "Klf2")) + themplot + gtheme+ xlab("") + ylab("") + theme(axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 90)) 
+ dev.off()
+ 
+```
+
+
+Table of DEG per subtype epith:
+```{r}
+Idents(epith)= "subtype"
+lmarkers <- FindAllMarkers(epith, only.pos = TRUE, logfc.threshold = 0.9 ) %>% dplyr::filter(.,p_val_adj<0.05 )
+markers=lmarkers
+
+## take the top 10 Most Upregulated genes per cluster as compared to all:
+top10 <-lmarkers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+##Write the results on a sheet:
+mylist= list(lmarkers,top10 )
+names(mylist)= c("Epithelial_1vsAll_Subclusters","Top10_Epithelial_1vsAll_Sub")
+writexl::write_xlsx(mylist, paste0(annotDir,"/DEG_Epithelial_SubclusterID_1vsAll_logFC0.5_FinalCorrected.xlsx") )
+```
+
+
+###DO NOT RUN THIS SINCE THE EPITH QS FILE IS ALREADY COMPUTED AND SAVED
+Save the final annotated Epithelial Seurat Object
+```{r}
+qs::qsave(epith, file= paste0(RDatadir, "/Epithelial_FinalAnnotation.qs"))
+```
+

@@ -1,0 +1,212 @@
+---
+title: "EMBO_study"
+author: "Melissa"
+date: "16/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir= here::here() #Should be the root folder Tumor_BRCA_p53
+ #"C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+
+inputDir= file.path(mainDir,"input" ,"human","scRNAseq","publicDatasets","input_GSE161529")
+outputDir= file.path(mainDir, "output","human","public_data","EMBO")
+###
+plotDir= file.path(outputDir,"Plots") ; if(!file.exists(plotDir)){dir.create(plotDir)}
+RdataDir= file.path(outputDir,"Rdata") ; if(!file.exists(RdataDir)){dir.create(RdataDir)}
+```
+
+
+
+
+https://github.com/BlakeRMills/MetBrewer/tree/main#functions
+
+
+```{r}
+e1 <- qs::qread(paste0(RdataDir, "/Epithelial_EMBO_Processed_Annotated.qs"))
+```
+
+
+###OPTIMIZE EPITHELIAL CLUSTERS ####
+```{r}
+DefaultAssay(e1)="SCT"
+e1= e1 %>% FindClusters(., resolution = 0.1)
+```
+
+```{r}
+Idents(e1)="seurat_clusters"
+markers <- FindAllMarkers(e1, assay = "RNA", logfc.threshold = 0.9, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+qs::qsave(markers, paste0(RdataDir, "/Epithelial_Clusters_TopMarkers_1vsAll_res01.qs"))
+```
+
+
+```{r Annotation Function}
+nbr=as.data.frame(table(e1$seurat_clusters, e1$Condition)) %>%    group_by(Var1) %>%   slice_max(Freq) %>% as.data.frame()
+
+#####rank per foldchange:
+topgenes = markers %>% group_by(cluster) %>% arrange(desc(avg_log2FC), .by_group = T) %>% dplyr::slice(1:50, .preserve = T) 
+topgenes=topgenes[,c(6,7)]
+##
+
+topgenes=aggregate(gene ~., topgenes, toString)
+#######
+nbr$Var1=as.character(nbr$Var1)
+nbr=nbr[match(topgenes$cluster,nbr$Var1),]
+stopifnot(all(nbr$Var1== topgenes$Group.1))
+
+topgenes$condition=nbr$Var2
+```
+
+Annotate the subclusters using the expression markers:
+```{r}
+Idents(e1)="seurat_clusters"
+annot1= topgenes$name
+names(annot1)= topgenes$cluster
+e1=RenameIdents(e1, annot1)
+e1$annot= Idents(e1)
+###############
+Idents(e1)="seurat_clusters"
+annot2=topgenes$name2
+names(annot2)= topgenes$cluster
+e1= RenameIdents(e1, annot2)
+e1$annot2= Idents(e1)
+e1$res_01= e1$seurat_clusters
+```
+
+Use a high resolution clustering:
+```{r}
+e1= e1 %>% FindClusters(resolution=0.5)
+
+Idents(e1)="seurat_clusters"
+markers <- FindAllMarkers(e1, assay = "RNA", logfc.threshold = 0.9, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+qs::qsave(markers, paste0(RdataDir, "/Epithelial_Clusters_TopMarkers_1vsAll_res05.qs"))
+####CREATE THEM
+topgenes$name= rep(NA, nrow(topgenes))
+##
+for (i in seq(1:nrow(topgenes))){
+  
+  
+  if (length(intersect(c("KRT5","ACTA2", "KRT14", "TAGLN", "KRT17"),unlist(strsplit(topgenes$gene[i], split = ", ")))) >= 3){
+      topgenes$name[i]= paste0("Basal_", topgenes$condition[i])
+  }
+  
+  if (length(intersect(c("PRLR", "PTN", "CITED1", "FOXO1","TBX3","MYB","TNFSF11", "KRT8", "KRT18", "TCIM", "AREG"),unlist(strsplit(topgenes$gene[i], split = ", ")))) >= 2){
+    topgenes$name[i]= paste0("ML_", topgenes$condition[i])
+  }
+  if (length(intersect(c("ALDH1A3", "CXCR4", "ELF5", "KIT","CD14", "CYP24A1"),unlist(strsplit(topgenes$gene[i], split = ", ")))) >= 1){
+    topgenes$name[i]= paste0("LP_", topgenes$condition[i])
+  }
+ 
+  else if(is.na(topgenes$name[i]) ){
+    topgenes$name[i]=paste0(unlist(strsplit(topgenes$gene[i], split = ", "))[1],"+ ", topgenes$condition[i])
+  }
+}
+
+```
+
+
+function to get the number of genes DE between clusters:
+
+
+```{r}
+merge_clusters_test= function(obj, logFC= 0.9,onlypos=TRUE ,k ){
+  
+  
+markers <- FindAllMarkers(obj, assay = "RNA", logfc.threshold = logFC, only.pos = onlypos) %>% dplyr::filter(p_val_adj<0.05 )
+  
+  nbr=as.data.frame(table(obj$seurat_clusters, obj$Condition)) %>%    group_by(Var1) %>%   slice_max(Freq) %>% as.data.frame()
+  
+  #####rank per foldchange:
+  topgenes = markers %>% group_by(cluster) %>% arrange(desc(avg_log2FC), .by_group = T) %>% dplyr::slice(1:50, .preserve = TRUE) 
+  ##keep only genes & cluster:
+  topgenes=topgenes[,c(6,7)]
+  ## aggregate by getting the top genes per cluster
+  topgenes=aggregate(gene ~., topgenes, toString)
+  #######
+  ##create a names list to get the number of shared DEG per pairwise clusters:
+  l= as.list(topgenes$gene)
+  names(l)= topgenes$cluster
+  li= lapply(l, FUN= function(x) {unlist(strsplit(x, split = ", "))})
+  ts=combn(li, 2, function(x) intersect(x[[1]], x[[2]]), simplify = F)
+  nms <- combn( names(li) , 2 , FUN = paste0 , collapse = "_" , simplify = FALSE )
+  ts= setNames( ts , nms )
+  rm(l); rm(li); rm(nms)
+  #############
+  
+  lt <- unlist(lapply(ts, length)) %>% as.data.frame()
+  lt$comb= rownames(lt)
+  colnames(lt)=c("NbrCommonDEG", "Pair")
+  
+  n=do.call(rbind,strsplit(lt$Pair, "_")) %>% as.data.frame()
+  lt=cbind(lt, n)
+  rm(n); rm(ts)
+  ##Cretae a matrix with the number of common DE gene per cluster:
+   mat <- cast(lt, V1~V2, value = 'NbrCommonDEG', margins = TRUE) %>% as.data.frame() %>% column_to_rownames("V1")
+   mat=mat[-nrow(mat),-ncol(mat)]
+  ############################################################################################################
+  dend=hclust(dist(mat), method="complete")
+  dend <- dendextend::color_branches(dend, k = k)
+  res=dendextend::cutree_1k.dendrogram(dend=dend,k=k) %>% as.data.frame() #5 seems the optimal number of clusters
+  colnames(res)= "GroupID"
+  res$cluster= rownames(res)
+
+return(res)
+return(topgenes)
+
+}
+```
+
+```{r}
+qs::qsave(topgenes, paste0(RdataDir, "/Epithelial_Clusters_Annotation.qs"))
+```
+
+```{r}
+id= topgenes$GroupID
+names(id)= gsub("C","", topgenes$cluster)
+Idents(e1)="seurat_clusters"
+e1=RenameIdents(e1, id)
+e1$ID_clustering= Idents(e1)
+```
+
+
+Annotate the clusters:
+```{r}
+png(paste0(plotDir, "/UMAP_Epithelial_Annotated.png"), height = 1200, width = 1200, res = 300)
+ p <- DimPlot(e1,  pt.size = 0.75, label = FALSE, label.size = 2, group.by = "annot2", cols = met.brewer(name="Klimt",n=length(unique(e1$annot2)),type="continuous") ) + NoLegend()+ NoAxes()
+  p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p)
+dev.off()
+###
+
+ p <- DimPlot(e1,  pt.size = 1, label = FALSE, label.size = 2, group.by = "annot2", cols = met.brewer(name="Klimt",n=length(unique(e1$annot2)),type="continuous") ) 
+ g=as_ggplot(get_legend(p)) 
+ pdf(paste0(plotDir, "/Legend_UMAP_Epithelial_Annotated.pdf"), height = 8, width = 8)
+ print(g)
+ dev.off()
+```
+
+
+```{r}
+sb <- subset(e1, annot2 %in% c("LP", "Basal", "ML", "PLCG2+ Normal","MMP7+ Normal"))
+
+png(paste0(plotDir, "/UMAP_Epithelial_Annotated_Subset.png"), height = 1200, width = 1200, res = 300)
+ p <- DimPlot(sb,  pt.size = 0.75, label = FALSE, label.size = 2, group.by = "Condition", cols = rev(met.brewer(name="Egypt",n=length(unique(sb$Condition)),type="discrete"))[c(2,1,3,4)])  + NoLegend()+ NoAxes() 
+  p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p)
+dev.off()
+```
+
+Check the Normal cluster:
+```{r}
+dt=as.data.frame.matrix(table(e1$annot2, e1$orig.ident))
+writexl::write_xlsx(dt, paste0(RdataDir,"/ContengencyTable_CoarseAnnotation.xlsx"))
+```
+
+

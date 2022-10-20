@@ -1,0 +1,125 @@
+---
+title: "global_var"
+author: "Melissa"
+date: "13/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load libraries, message=F}
+library(BiocManager)
+library(devtools)
+library(reticulate)
+library(LoomExperiment)
+library(SingleCellExperiment)
+library(ggplot2)
+#library(monocle3)
+library(sceasy)
+library(Seurat)
+library(ggpubr)
+library(viridis)
+library(here)
+library(qs)
+library(dplyr)
+library(tidyselect)
+library(tidyverse)
+library(clusterProfiler)
+library(msigdbr)
+library(rlist)
+library(RColorBrewer)
+library(colorRamps)
+library(Hmisc)
+library(ggrepel)
+library(patchwork)
+library(gtable)
+library(gridExtra)
+library(grid)
+library("glmGamPoi")
+library(sctransform)
+library(clustree)
+library(biomaRt)
+library(dendextend)
+library(tidyselect)
+library(ggsci)
+library(phateR)
+library(openxlsx)
+library(slingshot)
+library(tidymodels)
+library(dendextend)
+library(reshape2)
+library(data.table)
+library(UCell)
+library("glmpca")
+library(wesanderson)
+library(Hmisc) 
+library('EnhancedVolcano')
+# Sys.setenv(JAGS_HOME="C:\\Program Files\\JAGS\\JAGS-4.3.0")
+library("rjags")
+library(infercnv)
+set.seed(42)
+library(ggpubr)
+library(chea3)
+library(httr)
+library(jsonlite)
+library(SCENIC)
+library("gplots")
+library(ComplexHeatmap)
+suppressPackageStartupMessages(library(ComplexHeatmap))
+```
+
+#####--------------- General for PLOTS -------------########
+
+```{r gtheme for ggplots}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+
+
+
+Set colors: Which are stored on 2 individual lists
+```{r}
+brca_cols <- qs::qread( paste0(RDatadir, "/BRCA_ColorList.qs"))
+```
+
+#####------------------------- Gene lists to use --------------------------------------######
+------------------------------------------------------------------------------------------------
+
+
+Markers to plot in heatmaps / Dotplots
+cm: canonical  markers for the known cellular compartements: Immune, Epithelial, Fibroblast, Endothelial
+sm: Mammary Gland known population markers, and top genes expressed per tumor cluster
+```{r}
+cm=c("Ptprc", "Pecam1", "Fabp4", "Apold1", "Mbp", "Dpep1", "Krt5", "Krt8", "Elf5", "Col3a1","Lum")
+########
+sm=c("Krt5","Acta2","Krt14","Nrg1","Krt8", "Prlr","Esr1","Cited1","Ptn", "Aldh1a3", "Cd14","Kit","Lurap1l","Elf5","Lalba","Csn2","Wap","Glycam1","Csn1s1","Csn3","Wfdc18", "Mfge8","Gjb4", "Lgals7","Cdkn2a", "Cdkn2b","Cdkn2c","Met","Capza2","Tes","Il33","Gm26917", "Lars2","Mki67", "Fos","Jun","Egr1","Cav1","Sparc","Sparcl1", "Spp1","Ptgs2", "Xist","Meis2","Clu","Cytl1","Apod","Mgp","Odc1","Dcn","S100a4")
+
+epithgenes= list(c("Krt5","Acta2","Oxtr"), c( "Prlr","Esr1","Cited1"),c("Kit","Cd14","Aldh1a3"),c("Krt8","Krt18","Krt14"),c("Fcgbp","Lurap1l","Elf5" ),c( "Glycam1","Csn2","Wap","Lalba"), c( "Lgals7","Cdkn2a","Xist"))
+#####
+```
+
+
+#####--------- Load gene databases for pathway enrichment analysis ----------##########
+------------------------------------------------------------------------------------------------
+
+
+Load Hallmark MsigDB pathways:
+```{r}
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+```
+
+
+Use BiomaRt to get gene coordinates to use for InferCNV
+```{r}
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+listFilters(mouse)
+res <- getBM(attributes = c("ensembl_gene_id", "mgi_symbol","chromosome_name",'strand','transcript_start','transcript_end'), mart = mouse )#,values = genes
+##save the file:
+write.table(res[ c(2,3,5,6)], sep = "\t", row.names = F, file = paste0(RDatadir, "/GeneOrderingFile.txt"))
+```

@@ -1,0 +1,511 @@
+---
+title: "SunBurst_Plots"
+author: "Melissa"
+date: "27/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r directories creation}
+#the main Dir should be the root directory in which both input, output and script folders are stored
+mainDir= here::here()
+
+mainDir= "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+
+inputDir=  file.path(mainDir,"input", "multistaining") 
+outputDir= file.path(mainDir, "output", "multiStaining")
+#####################
+RDatadir <- file.path(outputDir,"RData2") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC2") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+PLOTdir <- file.path(outputDir, "Plots2") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
+
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(reshape2)
+library(qdapRegex)
+library(mclust)
+library(stringr)
+library(data.table)
+library(sunburstR)
+```
+
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+
+```{r}
+mat= qs::qread(paste0(RDatadir, "/Final_Matrix_All_Binarized_Markers.qs"))
+mat$name=paste0(mat$sample, "_", mat$Parent)
+```
+
+First remove stroma; then assign cell types according to marker expression
+keep mat unhanged
+```{r}
+
+epith= mat  %>% filter(! Parent== "Stroma") 
+epith$name=paste0(epith$sample, "_", epith$Parent)
+
+epith$Epithtype= ifelse(epith$Krt5== 1 & epith$Krt8== 0, "Basal", ifelse(epith$Krt5== 0 & epith$Krt8== 1, "Luminal", ifelse(epith$Krt5== 1 & epith$Krt8== 1, "Krt5Krt8p", "none")))
+
+epith= epith %>% select(! c( "sample", "Krt5", "Krt8", "H3K27me3"))
+
+epith$Cdkn2a= ifelse(epith$Cdkn2a== 0, "p16neg", "p16pos")
+
+epith$Ki67= ifelse(epith$Ki67== 0, "Ki67neg", "Ki67pos")
+
+
+epith$EMstate = ifelse(epith$Ecad== 1 & epith$Ncad== 0 , "Epithelial",
+                       ifelse(epith$Ncad== 1 & epith$Ecad== 0 , "Mesenchymal",
+                              ifelse(epith$Ncad== 1 & epith$Ecad== 1, "DP",
+                              "undetermined" )))
+##
+epith$Vim= ifelse(epith$Vim== 0, "Vimneg", "Vimpos")
+
+epith= epith %>% select(! c("Ecad", "Ncad"))
+
+
+#epith= epith[, c(4,5,1,2,6,3)]
+ #create a table of occurences of all combinations:
+dtest= as.data.frame(table(epith))
+
+qs::qsave(dtest, paste0(RDatadir, "/Table_Occurences_Combinations_changedEM.qs"))
+```
+epith$type= ifelse(epith$Ecad== 1 & epith$Vim== 1 & epith$Ncad== 0, "pEMT", 
+                   ifelse(epith$Ecad== 0 & epith$Vim== 0 & epith$Ncad==1, "fEMT",
+                          ifelse(epith$Ecad== 0 & epith$Vim== 1 & epith$Ncad==1, "fEMT", 
+                                 ifelse(epith$Ecad== 1 & epith$Vim== 0 & epith$Ncad==0,"Ecadpos",
+                                        ifelse(epith$Ecad== 0 & epith$Vim== 1 & epith$Ncad==0,"Vimpos", 
+                                               "undetermined" )))))
+                                               
+
+
+
+
+
+Make a ggplot version:
+```{r}
+sunburst_ggplot_multiplelayers= function(dt){
+  
+rectdata <- dt %>%
+  group_by( Epithtype ) %>%
+  summarise( tot_cells = sum( Freq ) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum( tot_cells ),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+
+outerCircleData1 <- dt %>%
+  group_by( Epithtype, Cdkn2a ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( rectdata %>% select( Epithtype,tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  ) 
+
+outerCircleData2 <- dt %>%
+  group_by( Epithtype, Cdkn2a, Ki67 ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData1 %>% select(Epithtype, Cdkn2a, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  ) 
+
+outerCircleData3 <- dt %>%
+  group_by(Epithtype, Cdkn2a,  Ki67, EMstate ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData2 %>% select(Epithtype,Cdkn2a, Ki67, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+outerCircleData4 <- dt %>%
+  group_by(Epithtype, Cdkn2a,  Ki67, EMstate, Vim ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData3 %>% select(Epithtype,Cdkn2a, Ki67,EMstate, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+innerCircle <- ggplot( rectdata ) +
+  geom_rect(
+    aes( xmin = 2, xmax = 3, ymin = ymin, ymax = ymax, fill = Epithtype ),
+    color = "black"
+  ) 
+         
+
+outerCircle1 <-
+  geom_rect(
+    data = outerCircleData1,
+    aes( xmin = 3, xmax = 4, ymin = ymin, ymax = ymax, fill = Cdkn2a ),
+    color = "black" ) 
+
+outerCircle2 <-
+  geom_rect(
+    data = outerCircleData2,
+    aes( xmin = 4, xmax = 5, ymin = ymin, ymax = ymax, fill = Ki67 ),
+    color = "black" ) 
+
+outerCircle3 <-
+  geom_rect(
+    data = outerCircleData3,
+    aes( xmin = 5, xmax = 6, ymin = ymin, ymax = ymax, fill = EMstate ),
+    color = "black")    
+
+outerCircle4 <-
+  geom_rect(
+    data = outerCircleData4,
+    aes( xmin = 6, xmax = 7, ymin = ymin, ymax = ymax, fill = Vim ),
+    color = "black") 
+
+
+
+name=unique(dt$name)
+p <- innerCircle  + outerCircle1 + outerCircle2 + outerCircle3 +outerCircle4+
+ scale_fill_manual(values= c("Basal"= "#46D459","Krt5Krt8p"= "#D076FA","Luminal"= "#E67373","none"= "#E6DADA","p16neg"="#F7D2F7","p16pos" = "#F08DE0","Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0","Vimneg" ="#F5F3DC","Mesenchymal"="#C9F3F7","Epithelial"= "#DAE9F0","undetermined"= "#E6E6E6", "DP"="#76E0F0",   "Vimpos"="#FAFA7F" ))  + ggtitle(name) + themplot
+
+
+g= p +  coord_polar( theta = "y" ) + themplot
+
+pdf(paste0(PLOTdir, "/New_ggSunburst_ggBarplot_", name, ".pdf"))
+print(p)
+print(g)
+dev.off()
+}
+
+for(i in unique(dtest$name)){
+  dt= dtest %>% filter(name== "Cre_pos_3M_Duct")
+  sunburst_ggplot_multiplelayers(dt)
+}
+
+dt= dtest %>% filter(name== "Cre_neg_5M_Duct")
+dt= dt %>% filter(! Epithtype== "none")
+sunburst_ggplot_multiplelayers(dt) 
+
+```
+
+Control Cre3M:
+
+```{r}
+epith$Parent= ifelse(epith$Parent=="Duct_Juxta", "Duct", epith$Parent)
+
+dtest= as.data.frame(table(epith))
+
+dt= dtest %>% filter(Parent== "Duct" & Epithtype=="Luminal" & Cdkn2a=="p16neg" & name=="Cre_neg_5M_Duct")
+
+rectdata <- dt %>%
+  group_by( Epithtype ) %>%
+  summarise( tot_cells = sum( Freq ) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum( tot_cells ),
+    ymin = lag( ymax, n = 1, default = 0 ) )
+
+outerCircleData2 <- dt %>%
+  group_by( Epithtype,  Ki67 ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( rectdata %>% select(Epithtype,  tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  ) 
+
+outerCircleData3 <- dt %>%
+  group_by(Epithtype,   Ki67, EMstate ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData2 %>% select(Epithtype, Ki67, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+outerCircleData4 <- dt %>%
+  group_by(Epithtype,   Ki67, EMstate, Vim ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData3 %>% select(Epithtype, Ki67,EMstate, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+innerCircle <- ggplot( rectdata ) +
+  geom_rect(
+    aes( xmin = 2, xmax = 3, ymin = ymin, ymax = ymax, fill = Epithtype ),
+    color = "black"
+  ) 
+        
+outerCircle2 <-
+  geom_rect(
+    data = outerCircleData2,
+    aes( xmin = 3, xmax = 4, ymin = ymin, ymax = ymax, fill = Ki67 ),
+    color = "black" ) 
+
+outerCircle3 <-
+  geom_rect(
+    data = outerCircleData3,
+    aes( xmin = 4, xmax = 5, ymin = ymin, ymax = ymax, fill = EMstate ),
+    color = "black")    
+
+outerCircle4 <-
+  geom_rect(
+    data = outerCircleData4,
+    aes( xmin = 5, xmax = 6, ymin = ymin, ymax = ymax, fill = Vim ),
+    color = "black") 
+
+name=unique(dt$name)
+
+pdf(paste0(PLOTdir, "/Ggsunburst_P16Neg_Luminal_Duct_Creneg5M.pdf"))
+p <- innerCircle  +  outerCircle2 + outerCircle3 +outerCircle4+
+ scale_fill_manual(values= c("Basal"= "#46D459","Krt5Krt8p"= "#D076FA","Luminal"= "#E67373","none"= "#E6DADA","p16neg"="#F7D2F7","p16pos" = "#F08DE0","Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0","Vimneg" ="#F5F3DC","Mesenchymal"="#C9F3F7","Epithelial"= "#92999E","undetermined"= "#E6E6E6", "DP"="#76E0F0",   "Vimpos"="#FAFA7F" ))  + ggtitle("Duct_P16negative") + themplot
+print(p)
+
+g= p +  coord_polar( theta = "y" ) + themplot
+print(g)
+dev.off()
+  
+
+```
+
+
+```{r}
+sunburst_ggplot_multiplelayers_V2= function(dt){
+
+#dt= dt %>% filter(Cdkn2a=="p16pos")
+dt= dt %>% filter(Cdkn2a=="p16pos")
+
+rectdata <- dt %>%
+  group_by( Epithtype ) %>%
+  summarise( tot_cells = sum( Freq ) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum( tot_cells ),
+    ymin = lag( ymax, n = 1, default = 0 ) )
+
+outerCircleData2 <- dt %>%
+  group_by( Epithtype,  Ki67 ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( rectdata %>% select(Epithtype,  tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  ) 
+
+outerCircleData3 <- dt %>%
+  group_by(Epithtype,   Ki67, EMstate ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData2 %>% select(Epithtype, Ki67, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+outerCircleData4 <- dt %>%
+  group_by(Epithtype,   Ki67, EMstate, Vim ) %>%
+  summarise( tot = sum( Freq ) ) %>%
+  left_join( outerCircleData3 %>% select(Epithtype, Ki67,EMstate, tot_cells) ) %>%
+  ungroup() %>%
+  mutate(
+    ymax = cumsum(tot),
+    ymin = lag( ymax, n = 1, default = 0 )
+  )
+
+innerCircle <- ggplot( rectdata ) +
+  geom_rect(
+    aes( xmin = 2, xmax = 3, ymin = ymin, ymax = ymax, fill = Epithtype ),
+    color = "black"
+  ) 
+        
+outerCircle2 <-
+  geom_rect(
+    data = outerCircleData2,
+    aes( xmin = 3, xmax = 4, ymin = ymin, ymax = ymax, fill = Ki67 ),
+    color = "black" ) 
+
+outerCircle3 <-
+  geom_rect(
+    data = outerCircleData3,
+    aes( xmin = 4, xmax = 5, ymin = ymin, ymax = ymax, fill = EMstate ),
+    color = "black")    
+
+outerCircle4 <-
+  geom_rect(
+    data = outerCircleData4,
+    aes( xmin = 5, xmax = 6, ymin = ymin, ymax = ymax, fill = Vim ),
+    color = "black") 
+
+name=unique(dt$Parent)
+
+pdf(paste0(PLOTdir, "/New_Ggsunburst_P16Pos_", name ,".pdf"))
+p <- innerCircle  +  outerCircle2 + outerCircle3 +outerCircle4+
+ scale_fill_manual(values= c("Basal"= "#46D459","Krt5Krt8p"= "#D076FA","Luminal"= "#E67373","none"= "#E6DADA","p16neg"="#F7D2F7","p16pos" = "#F08DE0","Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0","Vimneg" ="#F5F3DC","Mesenchymal"="#C9F3F7","Epithelial"= "#92999E","undetermined"= "#E6E6E6", "DP"="#76E0F0",   "Vimpos"="#FAFA7F" ))  + ggtitle(paste0(name,"_P16positive")) + themplot
+print(p)
+
+g= p +  coord_polar( theta = "y" ) + themplot
+print(g)
+dev.off()
+  
+}
+
+epith$Parent= ifelse(epith$Parent=="Duct_Juxta", "Duct", epith$Parent)
+dtest= as.data.frame(table(epith))
+
+
+for(i in unique(dtest$Parent)){
+  dt= dtest %>% filter(Parent== i)
+  sunburst_ggplot_multiplelayers_V2(dt)
+}
+
+ dt= dtest %>% filter(name== "Cre_pos_3M_Duct")
+  sunburst_ggplot_multiplelayers_V2(dt)
+```
+
+
+
+
+
+
+Take only Ducts:
+```{r}
+mat = qs::qread("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/multiStaining/RData2/Final_Matrix_All_Binarized_Markers.qs")
+rownames(mat)= paste0("cell_",seq(1, nrow(mat)))
+##-------------
+epith= mat  %>% filter(! Parent== "Stroma") 
+epith$name=paste0(epith$sample, "_", epith$Parent)
+
+epith$Epithtype= ifelse(epith$Krt5== 1 & epith$Krt8== 0, "Basal", ifelse(epith$Krt5== 0 & epith$Krt8== 1, "Luminal", ifelse(epith$Krt5== 1 & epith$Krt8== 1, "Krt5Krt8p", "none")))
+
+
+
+epith$Cdkn2a= ifelse(epith$Cdkn2a== 0, "p16neg", "p16pos")
+
+epith$Ki67= ifelse(epith$Ki67== 0, "Ki67neg", "Ki67pos")
+
+
+epith$EMstate = ifelse(epith$Ecad== 1 & epith$Ncad== 0 , "Epithelial",
+                       ifelse(epith$Ncad== 1 & epith$Ecad== 0 , "Mesenchymal",
+                              ifelse(epith$Ncad== 1 & epith$Ecad== 1, "DP",
+                              "undetermined" )))
+##
+epith$Vim= ifelse(epith$Vim== 0, "Vimneg", "Vimpos")
+
+epith= epith %>% select(! c("Ecad", "Ncad"))
+epith= epith %>% select(! c( "sample", "Krt5", "Krt8", "H3K27me3"))
+```
+
+```{r}
+data= epith %>% filter(name %in% c("Cre_pos_3M_Duct","Juxta_Duct_Juxta", "Juxta_G7058_Duct_Juxta" ,"T99_Juxta_Duct_Juxta"))
+
+data= data %>% filter(Epithtype %in% c("Luminal", "Krt5Krt8p"))
+
+ data=data[, c(1:6,  11:13)]
+
+data=data %>% filter(! EMstate=="undetermined")
+data$Cdkn2a= ifelse(data$Cdkn2a== "p16neg",0,1)
+ data=data[, -c(2,4)]
+
+
+
+sum(data$Cdkn2a)#87
+sum(data$Krt5) #777
+sum(data$Ncad) #62
+data= data %>% arrange(desc(Cdkn2a), desc(Ncad))
+```
+
+
+
+ "Epithtype"= c("Krt5Krt8p"= "#D076FA","Luminal"= "#E67373"),
+               "EMstate"= c("Mesenchymal"="#C9F3F7","Epithelial"= "#92999E","DP"="#76E0F0")
+               "T7071_Duct"= "#A867BF","mlesion_7058_Duct"=  "#4A9650",
+```{r}
+metadata= data[,5] %>% as.data.frame()
+rownames(metadata)= rownames(data)
+colnames(metadata)="name"
+#colnames(metadata)="sample"
+colours <- list("name"= c("Cre_pos_3M_Duct"="#D6BFBF","Juxta_Duct_Juxta"= "#CC5229","Juxta_G7058_Duct_Juxta"=  "#396666","T99_5617_mlesion_Duct" = "#D6C546","T99_Juxta_Duct_Juxta"= "#216EE0") )
+
+library("gplots")
+library(ComplexHeatmap)
+rowAnn <- HeatmapAnnotation(df = metadata,
+  which = 'col',
+  col = colours,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(0.5, 'mm'))
+
+#--------------------------------------
+#split <- factor( metadata$sample,levels = c( "5M_Duct","Duct" , "mlesion" ,"Tumor"  ))
+data=data[,c(1,3)]
+
+
+col_fun = colorRamp2(c("0", "1"), c( "grey","black"))
+hmap2 <- Heatmap(
+  t(data),
+  name = "Binary Matrix Markers",
+ # col = col_fun, 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =FALSE,
+  cluster_columns = FALSE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+ use_raster = TRUE,
+  #width = unit(100, "mm"), column_split=split,
+  top_annotation=rowAnn,row_names_gp = gpar(fontsize = 20, fontfamily = "sans"),column_names_gp = gpar(fontsize = 20, fontfamily = "sans")) 
+
+
+pdf(paste0(PLOTdir, "/Heatmap_Ducts.pdf"), height = 10, width = 12)
+draw(hmap2, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+#---------
+png(paste0(PLOTdir, "/Heatmap_Ducts.png"), height = 1200, width = 1400)
+draw(hmap2, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+```
+
+
+Identify the cells:
+```{r}
+s1= metadata %>% filter(name=="Cre_pos_3M_Duct")
+ s2= data[which(rownames(data) %in% rownames(s1)),]
+ s3= s2 %>% filter(Cdkn2a==0 & Ncad==1)
+n=intersect(rownames(s3),rownames(mat %>% filter(name=="Cre_pos_3M_Duct" & Cdkn2a== 0 & Ncad== 1 )) )
+
+n2=gsub("cell_","",n) %>% as.numeric()
+n3= n2 - 3887
+
+cre3c= read.table(file=paste0(inputDir, "/DetectionMeasures_Cre_pos_3M_Background.txt"), header = TRUE, sep="\t") %>% as.data.frame()
+
+cells.of.interest= cre3c[n3,] 
+writexl::write_xlsx(cells.of.interest, paste0(outputDir, "/Cre3M_Cells_P16neg_Ncadpos.xlsx"))
+```
+

@@ -1,0 +1,569 @@
+---
+title: "Step3_TCGA_DiffExpression_Comparison"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","TCGA","Global_Variables_TCGA.Rmd"), quiet=TRUE))
+```
+
+
+READ BOTHE THE DESEQ OBJECT AND THE METADATA
+```{r}
+dds= qs::qread(paste0(RDatadir, "/DESEQ_Object_Basal_vsAll.qs"))
+```
+
+```{r}
+tcga_br= readxl::read_xlsx(paste0(inputDir, "/Processed_Metadata.xlsx"))
+```
+
+
+### SKIP THIS PART
+```{r}
+res <- results(dds) #sub Others vs BRCA Basal 
+######
+rownames(res)=gsub("\\|.*", "", rownames(res)) 
+res$gene=rownames(res)
+res$log2FC= res$log2FoldChange* (-1)
+res=as.data.frame(res)
+###
+write.csv(res, paste0(DEdir, "/DEG_BASAL_vsOTHERS.csv"))
+```
+
+Extract the counts and compare expression values between scRNA P16 population and basal like TCGA samples:
+
+```{r}
+library(DESeq2)
+normalized_counts <- counts(dds, normalized=TRUE)
+rownames(normalized_counts) =gsub("\\|.*", "", rownames(normalized_counts ))
+
+qs::qsave(normalized_counts, paste0(RDatadir,"/Normalized_Counts_Matreix_BASALvsOthers.qs"))
+##
+tcga_br= tcga_br[which(tcga_br$Sample.ID %in% colnames(normalized_counts)),]
+```
+
+### START HERE IF YOU ONLY WANT THE PLOT:
+
+```{r}
+res= read.csv( paste0(DEdir, "/DEG_BASAL_vsOTHERS.csv"))
+normalized_counts= qs::qread(paste0(RDatadir, "/Normalized_Counts_Matreix_BASALvsOthers.qs"))
+```
+
+normalized_counts= qs::qread( "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/RData/Normalized_Counts_Matreix_BASALvsOthers.qs")
+
+```{r}
+library(Seurat)
+#read the invivo epith dataset :
+epith= qs::qread(paste0(RDatadir,"/Epithelial_FinalAnnotation.qs"))
+epith=qs::qread("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/invivo/RData/Epithelial_FinalAnnotation.qs")
+##Take the most significant and differential genes of the p16 population
+p16d= FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), only.pos = FALSE, logfc.threshold = 0.8, min.diff.pct = 0.2) %>% rownames_to_column(var="gene") %>% dplyr::filter(p_val_adj < 0.05) #
+p16d$gene=toupper(p16d$gene)
+```
+
+
+
+take the genes from the DEG of BRCA vs others:
+
+```{r}
+common= res[which(rownames(res) %in% p16d$gene),] 
+# plot the FC BRCAvs ALl , and P16 vs LP/AVD values of the genes:
+dat= p16d[which(p16d$gene %in% rownames(common)),] 
+identical(dat$gene, rownames(common))
+common=common[dat$gene,]
+##
+colnames(common)=c(colnames(common)[1:7], "log2FC_Bulk")
+dat$log2FC_Bulk= common$log2FC_Bulk
+
+
+dat$ratio= round(dat$avg_log2FC/dat$log2FC_Bulk)
+rm(common)
+dat$pn = ifelse(dat$log2FC_Bulk < 0, "neg", "pos")
+dat$pn= factor(dat$pn, levels=c("pos","neg"))
+```
+
+
+Visualize the common genes between the scRNAseq and the bulk RNAseq:
+```{r}
+p <-ggplot(data=dat) + geom_point(aes(x= avg_log2FC, y=log2FC_Bulk)) +
+  ggrepel::geom_text_repel(
+    data = subset(dat, ratio== 1),
+    aes(label = gene,x= avg_log2FC, y=log2FC_Bulk, color=pn),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines"), max.overlaps = 20) +theme_bw(base_size = 12) + theme(legend.position = "none") + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+png(paste0(DEdir,"/DotPlot_Log2FC_Bulk_singleCell.png"), height = 1500, width = 1500, res=300)
+print(p)
+dev.off()
+
+pdf(paste0(DEdir, "/DotPlot_Log2FC_Bulk_singleCell.pdf"), height = 8, width = 8)
+    print(p)
+dev.off()
+```
+
+```{r}
+p16n= p16d %>% filter(avg_log2FC < 0)  %>%  top_n(39, wt= abs(avg_log2FC))
+p16d= p16d %>% filter(avg_log2FC > 0)
+p16= rbind(p16d, p16n)
+```
+
+```{r}
+outputDir2="C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/Heatmaps_Survival/"
+
+norm.mat= normalized_counts[, which(colnames(normalized_counts) %in% scores$sample)]
+#------------------- Substract the mean per gene-------------------###
+norm.mat= norm.mat[which(rownames(norm.mat) %in% p16$gene),]
+log_norm.mat= log(norm.mat+1)
+log_centered <- sweep(log_norm.mat, MARGIN=1, STATS= rowMeans(log_norm.mat))
+log_centered_scaled= apply(log_centered, 1, function(x)  x/(max(x))) 
+#---------
+pdf(paste0(outputDir2, "Plots_Before.pdf"))
+hist(norm.mat)
+hist(log(norm.mat))
+hist(log_norm.mat)
+hist(log_centered)
+hist(log_centered_scaled)
+dev.off()
+#------------
+```
+
+Visualize the top genes:
+```{r}
+library("gplots")
+library(ComplexHeatmap)
+suppressPackageStartupMessages(library(ComplexHeatmap))
+
+metadata= scores[, c(4,5)]
+colours <- list("subtype"=c("BRCA_LumA"="#DCE66A","BRCA_LumB" = "#DBBA34","BRCA_Her2"= "#8BB064","BRCA_Normal"= "#6DD1C5","BRCA_Basal"= "#BD4C26"))
+###############
+metadata= metadata[, -1] %>% as.data.frame()
+colnames(metadata)="subtype"
+rownames(metadata)= scores$sample
+##
+metadata$subtype= factor(metadata$subtype, levels = c("BRCA_Basal", "BRCA_LumA" ,  "BRCA_LumB"  , "BRCA_Her2","BRCA_Normal" ) )
+colAnn <- HeatmapAnnotation(df = metadata,
+  which = 'col',
+  col = colours,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(0.5, 'mm'))
+##------------- FOR THE GENE ------------------##
+ p16$fc= ifelse(p16$avg_log2FC > 0, "Up", "Down")
+gene= p16[, c(1,7)]
+gene=gene[which(gene$gene %in% colnames(log_centered_scaled)),]
+gene=gene[match(colnames(log_centered_scaled), gene$gene),]
+rownames(gene)=NULL
+gene= gene %>% column_to_rownames("gene") 
+
+stopifnot(identical(rownames(gene),colnames(log_centered_scaled) ))
+
+###
+colg= list("fc"= c("Up"="red", "Down"="blue"))
+rowAnn= HeatmapAnnotation(df = gene,
+  which = 'row',
+  col = colg,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(0.5, 'mm'))
+```
+
+```{r}
+d=log_centered_scaled[, which(colnames(log_centered_scaled) %in% p16d$gene)]
+hmap <- Heatmap(
+  t(d),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = TRUE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  #width = unit(100, "mm"),
+  top_annotation=colAnn,row_names_gp = gpar(fontsize = 5, fontfamily = "sans"))
+
+pdf(paste0(outputDir2, "Heatmap_Genes_Up.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+```{r}
+hmap <- Heatmap(
+  t(log_centered_scaled),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = TRUE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn ,row_names_gp = gpar(fontsize = 5, fontfamily = "sans"))
+
+pdf(paste0(outputDir2, "Heatmap_Genes_Up_Down3.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+
+#-----------Basal---------------###
+Focus on Basal cells:
+```{r}
+bsl.metadata= metadata %>% filter(subtype=="BRCA_Basal")
+basal <- log_centered_scaled[which(rownames(log_centered_scaled) %in% rownames(bsl.metadata)),]
+ stopifnot(identical(rownames(bsl.metadata), rownames(basal)))
+stopifnot(identical(colnames(basal), rownames(gene)))
+#------------------------HEATMAP----------------##
+
+hmap <- Heatmap(
+  t(basal),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = TRUE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  row_names_gp = gpar(fontsize = 5, fontfamily = "sans"),
+  left_annotation = rowAnn)
+
+pdf(paste0(outputDir2, "Heatmap_Basal_Genes_Up_Down.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+
+##----------------Correlation heatmap--------------------##
+```{r}
+cor.basal=  WGCNA::cor(basal, use = "pairwise.complete.obs")
+hmap <- Heatmap(
+ cor.basal,
+  name = "pairwise correlation",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  row_names_gp = gpar(fontsize = 7, fontfamily = "sans"),column_names_gp = gpar(fontsize = 7, fontfamily = "sans"),left_annotation = rowAnn)
+
+pdf(paste0(outputDir2, "Heatmap_Pariwise_Correlation_Basal_Genes_Up_Down.pdf"), height = 10, width = 14)
+draw(hmap)
+dev.off()
+```
+
+#------------ STAGE ------------------------##
+
+Add metadata:
+```{r}
+tn$stage= tn$Neoplasm.Disease.Stage.American.Joint.Committee.on.Cancer.Code
+
+tn$simplifiedStage= ifelse(tn$stage== "STAGE I"| tn$stage== "STAGE IA", "1",
+                                 ifelse(tn$stage== "STAGE II"| tn$stage== "STAGE IIA" | tn$stage== "STAGE IIB", "2", 
+                                  ifelse(tn$stage== "STAGE IIIA"| tn$stage== "STAGE IIIB" | tn$stage== "STAGE IIIC" , "3", "3")))
+
+bsl.metadata= tn %>% select(simplifiedStage) %>% filter(is.na(simplifiedStage)== FALSE)
+rownames(bsl.metadata)= tn$Sample.ID
+bsl.metadata=as.data.frame(bsl.metadata)
+stopifnot(identical(rownames(bsl.metadata), rownames(basal)))
+```
+
+```{r}
+colb=list("simplifiedStage"=c("1"= "#AD1818","2"= "#BA9191","3"= "#D6CECE"))
+
+colAnn <- HeatmapAnnotation(df = bsl.metadata,
+  which = 'col',
+  col = colb,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(1, 'mm'))
+###----------------------------------------------------------#####
+
+hmap <- Heatmap(
+  t(basal),
+  name = "Basal samples",
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = FALSE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = TRUE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn,left_annotation = rowAnn,
+  row_names_gp = gpar(fontsize = 5, fontfamily = "sans"))
+
+pdf(paste0(outputDir2, "Heatmap_Basal_Genes_Up_Down2_Survival.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+#------------------ P16 Signature construction ---------------------##
+Construct the signature :
+```{r}
+p16$sign= ifelse(p16$avg_log2FC > 0, paste0(p16$gene, "+"), paste0(p16$gene, "-"))
+p16signature= list("preTumoral"= p16$sign)
+
+library(data.table)
+p16signature.bsl= UCell::ScoreSignatures_UCell(as.data.frame(t(basal)), features=p16signature) %>% as.data.frame()
+
+p16signature.bsl$sign= ifelse(p16signature.bsl$preTumoral_UCell > quantile(p16signature.bsl$preTumoral_UCell, 0.77), "High", "Low")
+
+p16signature.bsl= as.data.frame(p16signature.bsl[,2], row.names= rownames(p16signature.bsl))
+colnames(p16signature.bsl)="Binary_p16Sig"
+
+```
+
+
+
+Reorder elements according to a heatmap:
+```{r}
+library(dplyr)
+p16signature.bsl= p16signature.bsl %>% arrange(factor(Binary_p16Sig, levels = c("High", "Low")))
+basal2=basal[rownames(p16signature.bsl),]
+stopifnot(identical(rownames(p16signature.bsl), rownames(basal2)))
+
+colb=list("Binary_p16Sig"=c("High"= "#AD1818","Low"= "#D6CECE"))
+
+colAnn <- HeatmapAnnotation(df = p16signature.bsl,
+  which = 'col',
+  col = colb,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(1, 'mm'))
+
+
+hmap <- Heatmap(
+  t(basal2),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =FALSE,
+  cluster_columns = FALSE,
+  show_column_dend = FALSE,
+  show_row_dend = FALSE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn, column_order = rownames(p16signature.bsl))
+
+pdf(paste0(outputDir2, "Heatmap_Basal_P16Signature_BothPosNeg_Binary_Ordered_P16sig.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+Test only positive genes: 0.74
+```{r}
+p16$sign= ifelse(p16$avg_log2FC > 0, paste0(p16$gene, "+"), paste0(p16$gene, "-"))
+
+p16signature= list("preTumoral"= p16[which(p16$avg_log2FC> 0), 1])
+
+
+p16signature.bsl= UCell::ScoreSignatures_UCell(t(basal), features=p16signature) %>% as.data.frame()
+p16signature.bsl$sign= ifelse(p16signature.bsl$preTumoral_UCell > quantile(p16signature.bsl$preTumoral_UCell, 0.74), "High", "Low")
+
+p16signature.bsl= as.data.frame(p16signature.bsl[,2], row.names= rownames(p16signature.bsl))
+colnames(p16signature.bsl)="Binary_p16Sig"
+
+######--------------------------------###################
+
+library(dplyr)
+p16signature.bsl= p16signature.bsl %>% arrange(factor(Binary_p16Sig, levels = c("High", "Low")))
+basal2=basal[rownames(p16signature.bsl),]
+stopifnot(identical(rownames(p16signature.bsl), rownames(basal2)))
+
+colb=list("Binary_p16Sig"=c("High"= "#AD1818","Low"= "#D6CECE"))
+
+colAnn <- HeatmapAnnotation(df = p16signature.bsl,
+  which = 'col',
+  col = colb,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(1, 'mm'))
+
+
+hmap <- Heatmap(
+  t(basal2),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = FALSE,
+  show_column_dend = FALSE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn, column_order = rownames(p16signature.bsl))
+
+pdf(paste0(outputDir2, "Heatmap_Basal_P16Signature_Pos_Binary_Ordered_P16sig.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+
+
+
+Re zscale the basal data:
+```{r}
+norm.matB= normalized_counts[, which(colnames(normalized_counts) %in% rownames(basal2))]
+#------------------- Substract the mean per gene-------------------###
+norm.matB= norm.matB[which(rownames(norm.matB) %in% p16$gene),]
+
+log_norm.matB= log(norm.matB+1)
+log_centeredB <- sweep(log_norm.matB, MARGIN=1, STATS= rowMeans(log_norm.matB))
+log_centered_scaledB= apply(log_centeredB, 1, function(x)  x/(max(x))) 
+#---------
+pdf(paste0(outputDir2, "Plots_BasalOnly.pdf"))
+hist(norm.matB)
+hist(log(norm.matB))
+hist(log_norm.matB)
+hist(log_centeredB)
+hist(log_centered_scaledB)
+dev.off()
+#------------
+```
+
+
+```{r}
+p16$sign= ifelse(p16$avg_log2FC > 0, paste0(p16$gene, "+"), paste0(p16$gene, "-"))
+p16signature= list("preTumoral"= p16[which(p16$avg_log2FC> 0), 1])
+
+
+p16signature.bsl= UCell::ScoreSignatures_UCell(t(basal), features=p16signature) %>% as.data.frame()
+p16signature.bsl$sign= ifelse(p16signature.bsl$preTumoral_UCell > quantile(p16signature.bsl$preTumoral_UCell, 0.74), "High", "Low")
+
+p16signature.bsl= as.data.frame(p16signature.bsl[,2], row.names= rownames(p16signature.bsl))
+colnames(p16signature.bsl)="Binary_p16Sig"
+
+######--------------------------------###################
+
+library(dplyr)
+p16signature.bsl= p16signature.bsl %>% arrange(factor(Binary_p16Sig, levels = c("High", "Low")))
+
+log_centered_scaledB=log_centered_scaledB[rownames(p16signature.bsl),]
+
+stopifnot(identical(rownames(p16signature.bsl), rownames(log_centered_scaledB)))
+
+colb=list("Binary_p16Sig"=c("High"= "#AD1818","Low"= "#D6CECE"))
+
+colAnn <- HeatmapAnnotation(df = p16signature.bsl,
+  which = 'col',
+  col = colb,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(1, 'mm'))
+
+
+hmap <- Heatmap(
+  t(log_centered_scaledB),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = FALSE,
+  show_column_dend = FALSE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn, column_order = rownames(p16signature.bsl))
+
+pdf(paste0(outputDir2, "Heatmap_Basal_P16Signature_Pos_Rescaled.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+Test a gene:
+```{r}
+log_centered_scaledB=as.data.frame(log_centered_scaledB)
+log_centered_scaledB$bon= p16signature.bsl$Binary_p16Sig
+##
+log_centered_scaledB %>% ggplot(aes(x= bon, y=AQP5))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y=CDKN2A))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y= IGFBP4))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y= MUC15))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y= COL9A3))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y= MIA))+ geom_boxplot()
+log_centered_scaledB %>% ggplot(aes(x= bon, y= LTF))+ geom_boxplot()
+```
+
+```{r}
+dv <- apply(log_centered_scaledB[,-ncol(log_centered_scaledB)], 2, var) %>% as.data.frame()
+```
+
+```{r}
+res=data.frame("Gene"= colnames(basal2)[-ncol(basal2)], "Pval"= NA)
+for(i in seq_len(nrow(res))){
+  res[i,2] <- wilcox.test(basal2[,i] ~ bon, basal2, alternative = "two.sided")$p.value
+}
+res$Adj_Pval= p.adjust(res$Pval, method = "BH")
+```
+
+Plot the expression values of significantly different gene patterns:
+```{r}
+res %>% dplyr::filter(Adj_Pval < 0.05 ) %>% dplyr::select("Gene")
+gs <- res %>% dplyr::filter(Adj_Pval < 0.05) %>% dplyr::select("Gene")
+```
+
+```{r}
+colAnn <- HeatmapAnnotation(df = p16signature.bsl,
+  which = 'col',
+  col = colb,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(1, 'mm'))
+
+
+hmap <- Heatmap(
+  t(log_centered_scaledB[,gs$Gene]),
+  name = "expression",
+ # col = bluered(75), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = FALSE,
+  show_column_dend = FALSE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  top_annotation=colAnn, column_order = rownames(p16signature.bsl))
+
+pdf(paste0(outputDir2, "Heatmap_Basal_TopDifferentGenes.pdf"), height = 10, width = 10)
+draw(hmap, heatmap_legend_side="left", annotation_legend_side="right")
+dev.off()
+```
+
+
+
+
+

@@ -1,0 +1,174 @@
+---
+title: "Step3_5_IntraClusterCorrelation"
+author: "Melissa"
+date: "04/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+
+Calculate percentage of correlation begtween cells:
+```{r}
+library(Hmisc)
+######
+ccp16 <- qs::qread(paste0(occDir,"/CC_Cntr_Cnv_P16/ConsensusClustering_Result_CNV_p16.qs"))
+kp= ccp16[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+p16= obs1[,which(colnames(obs1) %in% rownames(cnt@meta.data)[which(cnt$subtype=="P16+ Pre-lesional")]  )]
+pc=pc[match(colnames(p16), pc$cell),]
+stopifnot(all(pc$cell== colnames(p16)))
+###
+datcor <- list()
+for(i in seq_len(4)){
+    dt <- p16[, which(colnames(p16) %in% rownames(pc[which(pc$kp== i),]))]
+    res<-rcorr(as.matrix(dt))
+    tm <- flattenCorrMatrix(res$r, res$P)
+    datcor[[as.character(i)]] <- tm$cor
+}
+resp <- as.data.frame(do.call(cbind, datcor)) 
+colnames(resp)=c("k1","k2","k3","k4")
+##############
+p <-  resp %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable), show.legend = F) + themplot 
+###
+ggsave(filename =paste0(ccDir, "/VlnPlot_PairwiseCorr_P16_intraClusters.pdf"), device = "pdf", plot = p, width = 500, height = 500, dpi = 500, units = "mm" ) 
+```
+
+SAME FOR STs:
+
+```{r}
+ccst <- qs::qread(paste0(occDir,"/ConsensusClustering_Result_ST_CNV.qs"))
+kp= ccst[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+
+pc=pc[match(colnames(obs2), pc$cell),]
+stopifnot(all(pc$cell== colnames(obs2)))
+###
+datcor <- list()
+for(i in seq_len(4)){
+    dt <- obs2[, which(colnames(obs2) %in% rownames(pc[which(pc$kp== i),]))]
+    res<-rcorr(as.matrix(dt))
+    tm <- flattenCorrMatrix(res$r, res$P)
+    datcor[[as.character(i)]] <- tm$cor
+}
+rest <- as.data.frame(do.call(cbind, datcor)) 
+colnames(rest)=c("k1","k2","k3","k4")
+###
+p <-  rest %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable), show.legend = F) + themplot 
+###
+ggsave(filename =paste0(ccDir, "/VlnPlot_PairwiseCorr_ST_intraClusters.pdf"), device = "pdf", plot = p, width = 500, height = 500, dpi = 500, units = "mm" ) 
+```
+
+SAME FOR LPS
+
+```{r}
+lp= obs1[,which(colnames(obs1) %in% rownames(cnt@meta.data)[which(cnt$subtype=="LP")]  )]
+
+cclp <- qs::qread(paste0(occDir,"/CC_LP_Cnv.qs"))
+kp= cclp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+
+pc=pc[match(colnames(lp), pc$cell),]
+stopifnot(all(pc$cell== colnames(lp)))
+###
+datcor <- list()
+library(Hmisc)
+for(i in seq_len(4)){
+    dt <- lp[, which(colnames(lp) %in% rownames(pc[which(pc$kp== i),]))]
+    res<-rcorr(as.matrix(dt))
+    tm <- flattenCorrMatrix(res$r, res$P)
+    datcor[[as.character(i)]] <- tm$cor
+}
+res2 <- as.data.frame(do.call(cbind, datcor)) 
+colnames(res2)=c("k1","k2","k3","k4")
+
+
+p <-  res2 %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable), show.legend = F) + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = variable, y = value))+themplot 
+###
+ggsave(filename =paste0(ccDir, "/VlnPlot_PairwiseCorr_LP_intraClusters.pdf"), device = "pdf", plot = p, width = 500, height = 500, dpi = 500, units = "mm" ) 
+###############################################################################
+###Take All for LP:
+flattenCorrMatrix <- function(cormat, pmat) {
+               ut <- upper.tri(cormat)
+               data.frame(
+               row = rownames(cormat)[row(cormat)[ut]],
+               column = rownames(cormat)[col(cormat)[ut]],
+               cor  =(cormat)[ut],
+               p = pmat[ut]
+               )
+}
+
+res<-rcorr(as.matrix(lp))
+tmp <- flattenCorrMatrix(res$r, res$P)
+tmp= tmp[,c(3,4)]
+tmp$k=rep("LP", nrow(tmp))
+colnames(tmp)=c("LP_cor","p", "k")
+tmp=tmp[,-2]
+###
+p <- tmp %>%  ggplot() + 
+  geom_violin(aes(x = k, y = cor), show.legend = F) + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = k, y = cor))+themplot 
+###
+ggsave(filename =paste0(ccDir, "/VlnPlot_PairwiseCorr_LP_intraClusters.pdf"), device = "pdf", plot = p, width = 500, height = 500, dpi = 500, units = "mm" ) 
+
+```
+
+## Basal cells
+```{r}
+ccbsl <- qs::qread(paste0(occDir,"/CC_Bsl_Cnv.qs")) #No k is optimal
+res<-rcorr(as.matrix(bsl))
+tm <- flattenCorrMatrix(res$r, res$P)
+tm$k= rep("Basal", nrow(tm))
+```
+
+Combine All:
+Bsl: tm
+LP: tmp
+P16: resp
+ST:rest
+
+```{r}
+tm=tm[,c(3,5)]
+colnames(tm)=c("Basal_cor", "k")
+
+colnames(resp)= paste0("P16_", colnames(resp))
+colnames(rest)= paste0("ST_", colnames(rest))
+```
+
+```{r}
+dat <- cbind(tm[,1], tmp[,1])
+colnames(dat)= c(colnames(tm)[1], colnames(tmp)[1])
+dat=as.data.frame(dat)
+
+## PDF:
+pdf(paste0(ccDir, "/Vln_IntraCorrelatrionClones.pdf"), height = 5, width = 10)
+    ggplot() +   geom_violin( data= reshape2::melt(dat), aes(x = variable, y = value, fill= variable), show.legend = F)+
+    geom_violin(data= reshape2::melt(resp), aes(x = variable, y = value, fill= variable),show.legend = F )+
+    geom_violin(data= reshape2::melt(rest), aes(x = variable, y = value, fill= variable),show.legend = F ) + gtheme+
+    scale_fill_manual(values= c( "#1B9E77" ,"#7D726A","#818F72", "#C7DEC1", "#A0D439", "#B0F24E","#CBC2CC", "#B16BB3", "#F277F2", "#A65DA0")) + themplot + xlab("") + ylab("") 
+dev.off()
+```
+
+```{r}
+p <- ggplot() +   geom_violin( data= reshape2::melt(dat), aes(x = variable, y = value, fill= variable), show.legend = F)+ stat_compare_means(data= dat,label = "p.signif", method = "wilcox.test", ref.group = "LP_cor",aes(label=..p.adj..))
+
+```
+

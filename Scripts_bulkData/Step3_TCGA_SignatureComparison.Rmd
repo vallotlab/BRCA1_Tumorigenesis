@@ -1,0 +1,108 @@
+---
+title: "Step3_TCGA_SignatureComparison"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","TCGA","Global_Variables_TCGA.Rmd"), quiet=TRUE))
+```
+
+## --------------- SKIP THIS PART ----------------------###
+###PLOT Signature Scores  
+
+
+```{r}
+library(Seurat)
+#read the invivo epith dataset :
+epith= qs::qread(paste0(RDatadir,"/Epithelial_FinalAnnotation.qs"))
+##Take the most significant and differential genes of the p16 population
+p16d= FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), only.pos = FALSE, logfc.threshold = 0.8, min.diff.pct = 0.2) %>% rownames_to_column(var="gene") %>% dplyr::filter(p_val_adj < 0.05) #
+p16d$gene=toupper(p16d$gene)
+```
+
+```{r}
+res= read.csv( paste0(DEdir, "/DEG_BASAL_vsOTHERS.csv"))
+normalized_counts= qs::qread(paste0(RDatadir, "/Normalized_Counts_Matreix_BASALvsOthers.qs"))
+tcga_br= readxl::read_xlsx(paste0(inputDir, "/Processed_Metadata.xlsx"))
+```
+
+
+
+```{r}
+gene.sets <- list(p16UP_signature =p16d[which(p16d$avg_log2FC > 0.8),1], EMT= toupper(emtg), Apoptosis=toupper(apoptog) )
+		#	p16Down_signature = p16d[which(p16d$avg_log2FC < (-0.8)),1])
+#gene.sets <- list(p16UP_signature =p16d[which(p16d$avg_log2FC > 0.8),1])
+scores <- ScoreSignatures_UCell(normalized_counts, features=gene.sets) %>% as.data.frame()
+head(scores)
+scores$sample=rownames(scores)
+###
+
+#scores=scores[ which(rownames(scores) %in% tcga_br$Sample.ID),] %>% as.data.frame()
+
+scores=scores[  tcga_br$Sample.ID,] %>% as.data.frame()
+stopifnot(identical(scores$sample, tcga_br$Sample.ID))
+
+scores$subtype=tcga_br$Subtype
+
+scores=scores[-which(scores$subtype=="Undefined"),]
+```
+
+```{r}
+rownames(scores)= scores$sample
+writexl::write_xlsx(scores, paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx"))
+```
+
+
+
+##--------------------------------------------START HERE -----------------##
+
+```{r}
+scores <- readxl::read_excel(paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")) %>% as.data.frame()
+#scores$sample=rownames(scores)
+```
+
+
+```{r}
+pdf(paste0(SIGdir,"/BoxPlot_Up_Sig_p16_UCELL_LogFC08_Diff02_EMT_APOPTOSIS.pdf"), height = 5, width =5)
+
+scores %>%  ggplot(aes(x=subtype, y=p16UP_signature_UCell)) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=scores,aes(x=subtype, y=p16UP_signature_UCell,color= subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey() +   gtheme + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "BRCA_Basal",aes(label=..p.adj..))
+################
+scores %>%  ggplot(aes(x=subtype, y=EMT_UCell))  + geom_boxplot( fill='#DBD8D8', color="black") + ylab("EMT_UCell")  + ylab("EMT_UCell Signature")  +geom_jitter(data=scores,aes(x=subtype, y=EMT_UCell,color= subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey() +   gtheme + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "BRCA_Basal",aes(label=..p.adj..))
+##################
+
+scores %>%  ggplot(aes(x=subtype, y=Apoptosis_UCell, fill= subtype))  + geom_boxplot( fill='#DBD8D8', color="black") + ylab("Apoptosis_UCell")  + ylab("Apoptosis_UCell Signature")  +geom_jitter(data=scores,aes(x=subtype, y=Apoptosis_UCell,color= subtype), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey() +   gtheme + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "BRCA_Basal",aes(label=..p.adj..))
+
+dev.off()
+```
+
+
+
+
+Plot P16 expression:
+
+```{r}
+library(viridis)
+library(hrbrthemes)
+dt <- normalized_counts[rownames(normalized_counts)%in% c( "CDK6", "CDKN2A", "CDK4", "RB1","E2F1"),] %>% t() %>% as.data.frame()
+#colnames(dt)="FN1"
+tcga_br=tcga_br %>% filter(Sample.ID %in% rownames(dt))
+dt=dt[tcga_br$Sample.ID,]
+stopifnot(identical(rownames(dt), tcga_br$Sample.ID))
+dt$type=tcga_br$Subtype
+dt=dt[which(is.na(dt$type)==FALSE),]
+###BOXPLOT representation:
+
+
+pdf(paste0(SIGdir, "/Boxplot_CDKN2A_log10Exp_BRCA.pdf"), height = 5, width = 5)
+dt %>%  ggplot(aes(x=type, y=log10(dt[,2]))) + geom_boxplot( fill='#DBD8D8', color="black") + ylab("log10(CDKN2A)")  + geom_jitter(data=dt,aes(x=type, y=log10(dt[,3]),color= type), size=1, alpha=0.9) + theme(legend.position = "none")  + scale_color_grey() +   gtheme + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "BRCA_Basal",aes(label=..p.adj..))
+dev.off()
+```
+
+

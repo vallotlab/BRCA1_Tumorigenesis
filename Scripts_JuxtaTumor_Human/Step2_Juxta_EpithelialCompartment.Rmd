@@ -1,0 +1,264 @@
+---
+title: "Step2_Juxta_EpithelialCompartment"
+author: "Melissa"
+date: "18/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir= mainDir= here::here()
+inputDir= file.path(mainDir, "input", "human", "snRNAseq", "juxtaTumor","filtered_matrices")
+outputDir= file.path(mainDir, "output", "human","snRNAseq", "juxtaTumor")
+#####################
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+DEdir <- file.path(outputDir, "DiffExp") ; if(!file.exists(DEdir)){dir.create(DEdir)}
+clustDir= file.path(outputDir, "Clustering") ; if(!file.exists(clustDir)){dir.create(clustDir)}
+cnvDir= file.path(outputDir, "CNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+```
+
+
+Focus on the epithelial
+```{r}
+epithelial= subset(juxta, annotation=="Epithelial")
+DefaultAssay(epithelial)="RNA"
+e2= subset(juxta, PRLR > 2 )
+e3= subset(juxta, PLIN1 < 0.1)
+
+#cells= c(colnames(e2), colnames(epithelial)) %>% unique()
+
+#epithelial= subset(juxta, cells= cells)
+epithelial= subset(e3, annotation %in% c("Epithelial", "Epithelial/Adipocytes"))
+DefaultAssay(epithelial)="SCT"
+
+epithelial= DietSeurat(epithelial, scale.data = T)
+
+epithelial <- merge(x=obj.list[[1]], y=obj.list[c(2: length(obj.list))])
+
+DefaultAssay(epithelial)="RNA"
+epithelial= SCTransform(epithelial, method = "glmGamPoi",  verbose = FALSE) 
+
+DefaultAssay(epithelial)="SCT"
+#epithelial= epithelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(epithelial[["SCT"]])= rownames(epithelial[["SCT"]]@scale.data)[-c(which(rownames(epithelial[["SCT"]]@scale.data) %in% grep("^MT-", rownames(epithelial[["SCT"]]@scale.data), value = TRUE)), which(rownames(epithelial[["SCT"]]@scale.data) %in% grep("^RPL", rownames(epithelial[["SCT"]]@scale.data), value = TRUE)),which(rownames(epithelial[["SCT"]]@scale.data) %in% grep("^RPS", rownames(epithelial[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+library(harmony)
+epithelial= epithelial%>% RunPCA( npcs = 60) %>% 
+    RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")   %>%  RunUMAP(., reduction= "harmony", dims= 1:40 ) %>% FindNeighbors(., reduction = "harmony", dims = 1:40) %>% FindClusters(., resolution = 1.0) 
+```
+
+```{r}
+Idents(epithelial)="seurat_clusters"
+DefaultAssay(epithelial)="RNA"
+epithelial=NormalizeData(epithelial)
+
+markers <- FindAllMarkers(epithelial, assay = "RNA", logfc.threshold = 0.5, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+topsm = markers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+Annotatiin:
+```{r}
+epithelial$subtype= epithelial$seurat_clusters
+epithelial$subtype= dplyr::recode(epithelial$subtype, "0"= "Basal" ,
+                                  "1"= "ML",
+                              
+                                  "2"= "ML" ,
+                                  "3"="Basal" ,
+                                  
+                                  "4"= "LP_2", 
+                                  "5"= "Avd" ,
+                                  "6"= "LP_1" ) 
+```
+
+```{r}
+qs::qsave(epithelial, paste0(RDatadir, "/Epithelial_DimHarmony2_F.qs")) #this is the final even for downstream analysis
+epithelial=qs::qread(paste0(RDatadir, "/Epithelial_DimHarmony2_F.qs"))
+epithelial= subset(epithelial, seurat_clusters %in% seq(1:6))
+```
+
+PLOT UMAP:
+```{r}
+epithelial=subset(epithelial, orig.ident %in% c("SA_AB_2047" ,"SA_AB_5301", "SA_AD_1766", "SA_AD_8557", "SA_AG_5988"))
+
+cols_ep= c("LP_2"="#a67c4b"  ,"ML"="#4D8D58","Basal"="#1B9E77", "Avd"="#7F7C39","LP_1"=  "#B06C1A") 
+umap_custom <- as.data.frame(epithelial[["umap"]]@cell.embeddings)
+
+metada_cells <- epithelial$orig.ident
+metada_cells_col <- cols_ep[match(epithelial$subtype,names(cols_ep))]
+
+draw <- sample(1:dim(umap_custom)[1])
+ 
+png(paste0(clustDir,"/UMAP_epith_Keep_Subtype.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + theme(legend.position = "right") + NoAxes()
+print(p)
+dev.off()
+
+pdf(paste0(clustDir, "/Legend_UMAP_Ssample_Epithelial.pdf"))
+g= as_ggplot(get_legend(DimPlot(epithelial, group.by = "orig.ident", cols = cols)))
+print(g)
+dev.off()
+```
+
+
+```{r}
+cols_ep= c("LP_2"="#a67c4b"  ,"ML"="#4D8D58","Basal"="#1B9E77", "Avd"="#7F7C39","LP_1"=  "#B06C1A") 
+umap_custom <- as.data.frame(epithelial[["umap"]]@cell.embeddings)
+
+metada_cells <- epithelial$orig.ident
+metada_cells_col <- cols[match(epithelial$orig.ident,names(cols))]
+
+draw <- sample(1:dim(umap_custom)[1])
+ 
+png(paste0(clustDir,"/UMAP_epith_Keep_Sample.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ,fill = metada_cells_col[draw] ))+ geom_point(size = 3, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + theme(legend.position = "right") + NoAxes()
+print(p)
+dev.off()
+
+pdf(paste0(clustDir, "/Legend_UMAP_Subtype_Epithelial.pdf"))
+g= as_ggplot(get_legend(DimPlot(epithelial, group.by = "orig.ident", cols = cols)))
+print(g)
+dev.off()
+```
+
+```{r}
+p <- DotPlot(epithelial, features= c("KRT5", "KRT14","ACTA2","KRT8", "ALDH1A3","KIT", "ELF5","ELF3","ESR1","PRLR"),dot.scale = 14) + coord_flip() + scale_color_viridis(option="D") + NoLegend()
+
+pdf(paste0(clustDir, "/DotPlot_Markers_NoLegend_Increased.pdf"))
+print(p)
+dev.off()
+```
+CUSTOM UMAP:
+
+```{r}
+png(paste0(clustDir, "/Umap_P16Human_New_1_5_NotGrey.png"), width = 1000, height = 1000, res = 300)
+
+g <-  FeaturePlot(epithelial, features = "p16sigH_UCell", pt.size=2) + 
+      geom_point(data= as.data.frame(epithelial[["umap"]]@cell.embeddings) , aes(x =UMAP_1, y = UMAP_2, fill= epithelial$p16sigH_UCell,stroke=0.5), shape = 21,stroke=0.5, colour= "black", size=2)   + scale_fill_viridis(option="B",direction=-1,limits = c(0.0, max(epithelial$p16sigH_UCell))) + NoLegend() + NoAxes() + ggtitle("")
+print(g)
+dev.off()
+#
+
+png(paste0(clustDir,"/UMAP_epith_MainType.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom, aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2, shape = 21,color = metada_cells,alpha=1) + theme_classic() + theme(legend.position = "right") + NoAxes() + scale_fill_viridis(option="B", direction=-1)
+print(p)
+dev.off()
+
+pdf(paste0(clustDir, "/Legend_UMAP_MainType.pdf"))
+g= as_ggplot(get_legend(DimPlot(juxta, group.by = "annotation", cols = col_annotation)))
+print(g)
+dev.off()
+```
+
+
+```{r}
+cols_annot= met.brewer(name="Austria",n=length(unique(epithelial$subtype)),type="discrete")
+
+png(paste0(clustDir, "/UMAP_Integrated_ManualAnnotation_Epithelial.png"))
+p <- DimPlot(epithelial, label = F, group.by = "subtype", cols=cols_annot, pt.size = 1.5)
+p[[1]]$layers[[1]]$aes_params$alpha = 0.7
+print(p)
+dev.off()
+```
+
+
+
+
+```{r}
+epith= qs::qread("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/invivo/RData/Epithelial_FinalAnnotation.qs")
+
+p16d= FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), only.pos = TRUE, logfc.threshold = 0.5)  %>% dplyr::filter(p_val_adj < 0.05) %>% rownames_to_column(var="gene")
+p16d$GENE= toupper(p16d$gene)
+##----------------------------
+
+sigH=readxl::read_excel("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/RData/List_VarianceImportance_CPTAC_TCGA.xlsx")
+sigM= sigH
+sigH= sigH %>% dplyr::filter(gene %in% seq(1, 13))
+```
+
+
+
+Load the p16 signature and try to find sub modes:
+
+```{r}
+DefaultAssay(epithelial)="RNA"
+features=list("p16sigM"= sigM$feature ,"p16sigH"= sigH$feature)
+library(UCell)
+epithelial= UCell::AddModuleScore_UCell(epithelial, features = features)
+###
+png(paste0(clustDir, "/UMAP_P16SignatureHuman.png"), height = 1500, width = 1500, res = 300)
+p <- FeaturePlot(epithelial, features = "p16sigH_UCell", pt.size = 2.5) + scale_color_viridis(option="B", direction = -1)
+print(p)
+dev.off()
+
+```
+
+VlnPlot:
+```{r}
+Idents(epithelial)="subtype"
+
+epithelial=subset(epithelial, idents=c("ML", "LP_1", "LP_2", "Avd"))
+
+epithelial@active.ident= factor(Idents(epithelial), levels=c("ML", "LP_1", "LP_2", "Avd"))
+
+pdf(paste0(clustDir, "/Vln_P16SignatureHuman_Median2.pdf")) 
+p <- VlnPlot(epithelial, features = "p16sigH_UCell", pt.size = 0,  cols = cols_ep) +     stat_compare_means(ref.group = "LP_2", label = "p.signif", method = "wilcox.test") + stat_summary(fun.y=median, geom="point", size=2, color="black") + NoLegend()
+#+ geom_boxplot(width=0.1)
+print(p)
+dev.off()
+```
+
+Donut plot of the distribution of LP_2
+```{r}
+m <- epithelial@meta.data %>% dplyr::filter(subtype== "LP_2")
+m= m[, c(1,2)] %>% as.data.frame()
+###
+
+m1 = m %>%
+  group_by(orig.ident)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(orig.ident)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+m1$orig.ident=as.factor(m1$orig.ident)
+
+p <- ggplot(data = m1, 
+       aes(x = 2, y = percentage, fill = orig.ident))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values=cols)+
+  xlim(.2,2.5)
+##
+pdf(paste0(clustDir, "/DonutPlot_LP_2.pdf"), height = 5, width = 7)
+print(p)
+dev.off()
+rm(m)
+rm(m1)
+gc()
+```
+
+```{r}
+
+epithelial2=epithelial
+epithelial=subset(epithelial, idents = c("ML", "LP_1", "LP_2", "Avd"))
+
+epithelial$subtype= factor(epithelial$subtype, levels=c("ML", "LP_1", "LP_2", "Avd"))
+Idents(epithelial)="subtype"
+
+p <- StackedVlnPlot(epithelial, features = c("KRT7", "KRT15", "KRT8","ELF5","ALDH1A3"), cols=cols_ep)
+
+pdf(paste0(clustDir, "/StackVln_WOBsl_IdentityGenes.pdf"))
+print(p)
+dev.off()
+```
+

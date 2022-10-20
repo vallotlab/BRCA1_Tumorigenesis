@@ -1,0 +1,230 @@
+---
+title: "Step4_Pseudotime_3_Slingshot"
+author: "Melissa"
+date: "6/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+```{r}
+epith= qs::qread(file= paste0(RDatadir, "/Epithelial_FinalAnnotation.qs"))
+```
+
+
+#----------------- SKIP THIS FIRST PART -------------------------##
+run Slingshot only on the WT & WT with precancerous lesions:
+```{r}
+Idents(epith)="subtype"
+DefaultAssay(epith)
+s1= subset(epith, idents= c("LP","Avd","P16+ Pre-lesional", "Mki67+ ST","Cytl1+ ST","Fgf8+ ST","Spp1+ ST","Luminal H-S"))
+emb=Embeddings(s1, reduction = "umap") %>% as.data.frame()
+emb= emb %>% dplyr::filter(., UMAP_2 > (-10) & UMAP_2 < 5)
+#emb= emb %>% dplyr::filter(., UMAP_2 > (-5) & UMAP_2 < 5 & UMAP_1 < (-3))
+s1= subset(s1, cells= rownames(emb))
+```
+
+
+#------------------------ AVD as the root ---------------------------#
+Run slingshot on the selected dataset:
+```{r}
+sds <- slingshot(Embeddings(s1, "umap"), clusterLabels = s1$subtype, 
+                 start.clus = "Avd")
+
+cell_col= s1$subtype
+cell_col= recode(cell_col,"LP"="#B06C1A", "P16+ Pre-lesional"= "#ACEB0E" ,"Mki67+ST"= "#D6229A"  , "Fgf8+ ST"="#9F79B8"   , "Cytl1+ ST"= "#8D3094" ) 
+```
+SAVE THE SDS OBJECT WHERE ROOT=AVD
+```{r}
+qs::qsave(sds, paste0(RDatadir, "/Slingshot_Root_Avd.qs"))
+```
+
+##----------------------------- START HERE IF YOU WANT TO GENRATE THE FIGURE -------------------------------- ##
+
+```{r}
+sds= qs::qread( paste0(RDatadir, "/Slingshot_Root_Avd.qs"))
+####
+
+DefaultAssay(epith)
+s1= subset(epith, idents= c("LP","Avd","P16+ Pre-lesional", "Mki67+ ST","Cytl1+ ST","Fgf8+ ST","Spp1+ ST","Luminal H-S"))
+emb=Embeddings(s1, reduction = "umap") %>% as.data.frame()
+emb= emb %>% dplyr::filter(., UMAP_2 > (-10) & UMAP_2 < 5)
+#emb= emb %>% dplyr::filter(., UMAP_2 > (-5) & UMAP_2 < 5 & UMAP_1 < (-3))
+s1= subset(s1, cells= rownames(emb))
+
+```
+
+Plot the umap with the lines
+```{r}
+####Add the Line to the pseudotime:
+for(i in seq_len(4)){
+  assign(paste0("dt",i), as.data.frame(slingCurves(sds)[[i]]$s[slingCurves(sds)[[i]]$ord, ]))
+}
+colnames(dt1)=c("umap1","umap2")
+colnames(dt2)=c("umap1","umap2")
+colnames(dt3)=c("umap1","umap2")
+colnames(dt4)=c("umap1","umap2")
+###
+#dt1=dt1[colnames(s1),]
+#dt2=dt2[colnames(s1),]
+#dt3=dt3[colnames(s1),]
+#dt4=dt4[colnames(s1),]
+##
+p = DimPlot(s1, group.by = "subtype",  pt.size = 5, cols = brca_cols$col)  + NoAxes() + ggtitle("") + geom_path(data =dt1, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt2, aes(x=umap1, y=umap2), size = 1, col="black")+ geom_path(data =dt3, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt4, aes(x=umap1, y=umap2), size = 1, col="black")  +NoLegend()
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+#####
+
+###
+pdf(paste0(slingshotDir, "/Slingshot_Umap_Root_Avd_Lines.png"), width = 10, height = 10) 
+print(p)
+dev.off()
+
+umap_custom <- as.data.frame(s1[["umap"]]@cell.embeddings)
+metada_cells <- s1$subtype
+metada_cells_col <- brca_cols$col[match(s1$subtype,names(brca_cols$col))]
+
+draw <- sample(1:dim(umap_custom)[1])
+
+png(paste0(annotDir,"/Slingshot_Umap_Root_Avd_Lines.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + ggtitle("") + geom_path(data =dt1, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt2, aes(x=umap1, y=umap2), size = 1, col="black")+ geom_path(data =dt3, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt4, aes(x=umap1, y=umap2), size = 1, col="black")   #+NoLegend()
+print(p)
+dev.off()
+
+leg=as_ggplot(get_legend(p))
+
+pdf(paste0(slingshotDir, "/Legend_Pseudotime_Umap.pdf"),width = 10, height = 10)
+print(leg)
+dev.off()
+
+```
+
+
+
+#------------------------ LP as the root ---------------------------#
+
+```{r}
+Idents(epith)="subtype"
+DefaultAssay(epith)
+s1= subset(epith, idents= c("LP","Avd","P16+ Pre-lesional", "Mki67+ ST","Cytl1+ ST","Fgf8+ ST","Spp1+ ST","Luminal H-S"))
+emb=Embeddings(s1, reduction = "umap") %>% as.data.frame()
+emb= emb %>% dplyr::filter(., UMAP_2 > (-10) & UMAP_2 < 5)
+#emb= emb %>% dplyr::filter(., UMAP_2 > (-5) & UMAP_2 < 5 & UMAP_1 < (-3))
+s1= subset(s1, cells= rownames(emb))
+##plot the New coordinates:
+DimPlot(s1)
+##
+dt <- Embeddings(s1, reduction="umap") %>% as.data.frame()
+dt$subtype= s1$subtype
+dt=as.data.frame(dt)
+lp <- dt[ which(dt$subtype %in% c("LP","P16+ Pre-lesional" )),]
+lp = lp[-which(lp$UMAP_1> (-3) & lp$UMAP_2 < (-3)),]
+##
+ss1= subset(s1, cells= colnames(s1)[-which(colnames(s1) %in% rownames(dt[which(dt$UMAP_1> (-4) & dt$UMAP_2 < (-3)),]))])
+```
+
+```{r}
+sds <- slingshot(Embeddings(s1, "umap"), clusterLabels = s1$subtype, 
+                 start.clus = "LP", stretch = 0)
+
+for(i in seq_len(4)){
+  assign(paste0("dt",i), as.data.frame(slingCurves(sds)[[i]]$s[slingCurves(sds)[[i]]$ord, ]))
+}
+colnames(dt1)=c("umap1","umap2")
+colnames(dt2)=c("umap1","umap2")
+colnames(dt3)=c("umap1","umap2")
+colnames(dt4)=c("umap1","umap2")
+
+pdf(paste0(slingshotDir, "/Slingshot_Umap_Root_LP_Lines.pdf"), width = 10, height = 10)
+
+p = DimPlot(s1, group.by = "subtype",  pt.size = 6, cols = brca_cols$col, label = F)  + NoAxes() + ggtitle("") + geom_path(data =dt1, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt2, aes(x=umap1, y=umap2), size = 1, col="black")+ geom_path(data =dt3, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt4, aes(x=umap1, y=umap2), size = 1, col="black")  +NoLegend()
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+print(p)
+dev.off()
+
+#####
+
+umap_custom <- as.data.frame(s1[["umap"]]@cell.embeddings)
+metada_cells <- s1$subtype
+metada_cells_col <- brca_cols$col[match(s1$subtype,names(brca_cols$col))]
+
+draw <- sample(1:dim(umap_custom)[1])
+
+png(paste0(slingshotDir,"/Slingshot_Umap_Root_LP_Lines.png"),height=1000, width = 1000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + ggtitle("") + geom_path(data =dt1, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt2, aes(x=umap1, y=umap2), size = 1, col="black")+ geom_path(data =dt3, aes(x=umap1, y=umap2), size = 1, col="black") + geom_path(data =dt4, aes(x=umap1, y=umap2), size = 1, col="black")  +NoLegend()
+print(p)
+dev.off()
+
+```
+
+
+#--------------OFFICIAL SLINGSHOT RESULTS WITH ONLY LP ----------------------------#
+
+###NOT RUN #-
+ Prepare the data to run slingshot:
+```{r}
+Idents(epith)= "subtype"
+seu= subset(epith, idents= c("LP","P16+ Pre-lesional", "Mki67+ ST","Fgf8+ ST","Cytl1+ ST")) 
+emb=Embeddings(seu, reduction = "umap") %>% as.data.frame()
+emb= emb %>% dplyr::filter(., UMAP_2 > (-4.8) & UMAP_2 < 5 & UMAP_1 < (-3))
+seu= subset(seu, cells= rownames(emb))
+```
+
+```{r}
+sds <- slingshot(Embeddings(seu, "umap"), clusterLabels = seu$subtype, 
+                 start.clus = "LP", stretch = 2 )
+qs::qsave(sds, paste0(RDatadir, "/Slingshot_Obj_OnlyTransitioning_ST.qs"))
+```
+
+
+
+```{r}
+sds= qs::qread(paste0(RDatadir, "/Slingshot_Obj_OnlyTransitioning_ST.qs"))
+```
+
+```{r}
+library(dplyr)
+all(seu@assays$RNA@var.features==epith@assays$RNA@var.features)
+DefaultAssay(seu)="RNA"
+seu= FindVariableFeatures(seu)
+top_hvg <- HVFInfo(seu) %>% rownames_to_column(., var="gene")%>% 
+  arrange(desc(variance)) %>% 
+  top_n(2000, variance) %>% #3000
+  pull(gene)
+top_hvg= top_hvg[- c(grep("^mt-", top_hvg),grep("^Rps", top_hvg), grep("^Rpl", top_hvg)) ]
+dat_use <- t(GetAssayData(seu, slot = "data")[top_hvg,])
+```
+
+```{r}
+#sds: Slingshot object
+Var_selection= function(sds,n){
+  dat_use_df <- cbind(slingPseudotime(sds)[,n], dat_use) 
+   colnames(dat_use_df)[1] <- "pseudotime"
+    dat_use_df <- as.data.frame(dat_use_df[!is.na(dat_use_df[,1]),])
+    dat_split <- initial_split(dat_use_df)
+   dat_train <- training(dat_split)
+   dat_val <- testing(dat_split)
+     model <- rand_forest(mtry = 200, trees = 500, min_n = 10, mode = "regression") %>%
+  set_engine("ranger", importance = "impurity", num.threads = 1) %>%
+  fit(pseudotime ~ ., data = dat_train)
+     val_results <- dat_val %>% 
+  mutate(estimate = predict(model, .[,-1]) %>% pull()) %>% 
+  dplyr::select(truth = pseudotime, estimate)
+  var_imp <- sort(model$fit$variable.importance, decreasing = TRUE)
+  return(var_imp)
+}
+
+var_imp1= Var_selection(sds, 1)
+
+rm(list=ls(pattern="^dat_"))
+```
+

@@ -1,0 +1,49 @@
+---
+title: "invivo_Mouse_Stroma_Annotation"
+author: "Melissa"
+date: "19/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+brca=qs::qread("C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/mouse/scRNAseq/invivo/RData/BRCA_Merged_Annot_forCC.qs")
+```
+
+Focus on Endothelial cells:
+```{r}
+endothelial= subset(brca, idents = "Endothelial")
+
+DefaultAssay(endothelial)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(endothelial[["SCT"]])= rownames(endothelial[["SCT"]]@scale.data)[-c(which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^mt-", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)), which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)),which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^Rps", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+library(harmony)
+#%>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  
+endothelial= endothelial%>% RunPCA( npcs = 60)  %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) %>% FindClusters(., resolution = 1.0) 
+```
+
+
+```{r}
+Idents(endothelial)="seurat_clusters"
+DefaultAssay(endothelial)="RNA"
+endothelial=NormalizeData(endothelial)
+
+markers <- FindAllMarkers(endothelial, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+topsm = markers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+2,3:Fibroblasts
+6,8 :  Lymphatic endothelial cells
+
+```{r}
+endothelial$subtype= endothelial$seurat_clusters
+endothelial$subtype= dplyr::recode(endothelial$subtype, "0"= "Endothelial", "1"="Endothelial","2"="Pericytes", "3"= "Pericytes", "4"= "Endothelial", "5"= "Endothelial", "6"= "Lymphatic endothelial")
+```
+

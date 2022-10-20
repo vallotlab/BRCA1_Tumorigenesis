@@ -1,0 +1,219 @@
+---
+title: "Step5_TCGA_SurvivalAnalysis"
+author: "Melissa"
+date: "04/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","TCGA","Global_Variables_TCGA.Rmd"), quiet=TRUE))
+```
+
+```{r}
+tnscores=readxl::read_xlsx(paste0(RDatadir, "/Metadata_forSurvivalanalysis.xlsx"))
+tn = readxl::read_xlsx( paste0(RDatadir, "/Metadata_forSurvivalanalysis_OnlyBRCA_Basal.xlsx"))
+scores=readxl::read_xlsx( paste0(SIGdir, "/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")) %>% as.data.frame()
+rownames(scores)=scores$sample
+```
+
+```{r}
+outputDir2= "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/RData/"
+
+tnscores=readxl::read_xlsx("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/RData/Metadata_forSurvivalanalysis.xlsx")
+
+tn = readxl::read_xlsx("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/RData/Metadata_forSurvivalanalysis_OnlyBRCA_Basal.xlsx")
+
+scores=readxl::read_xlsx( "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/TCGA/Signatures/Signature_Scores_All_PANCANCER_p16_EMT_Apop.xlsx")%>% as.data.frame()
+rownames(scores)=scores$sample
+```
+
+
+Plot survival curves and determine the link between the p16 signature and the disease free survival :
+```{r}
+grep("Disease.Free", colnames(tn), value = T )
+grep("Survival", colnames(tn), value = T)
+```
+
+```{r}
+tnscores= scores %>% dplyr::filter(rownames(scores) %in% tn$Sample.ID)
+
+stopifnot(identical(tn$Sample.ID, rownames(tnscores)))
+tn$p16Up= tnscores$p16UP_signature_UCell
+
+tn$p16discrete= ifelse(tn$p16Up > quantile(tn$p16Up, 0.75), "P16High", "P16_Low")
+
+
+
+tn$Progression.Free.Status_binary <- ifelse(tn$Progression.Free.Status=="0:CENSORED",0,1)
+#P16Low should be tn$p16Up < quantile(tn$p16Up, 0.25)
+
+fit <- survfit(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn)
+library(survminer)
+pdf(paste0(SURVdir,"/SurvivalPlot_DiseaseFreeMonths_P16Discrete_log08_Diff20_TwoClasses.pdf"), height = 5, width = 5)
+ p=ggsurvplot(fit,
+          pval = TRUE, conf.int = FALSE,
+          risk.table = FALSE, 
+          risk.table.col = "strata",
+          linetype = "strata", 
+          surv.median.line = "hv", 
+          ylab="Overall surrival",
+          ggtheme = theme_bw(), 
+          palette = c("#DED5D5", "#262424", "#756F6F")) 
+ print(p)
+dev.off()
+res <- pairwise_survdiff(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn)
+```
+
+
+```{r}
+tnscores= scores %>% dplyr::filter(rownames(scores) %in% tn$Sample.ID)
+
+stopifnot(identical(tn$Sample.ID, rownames(tnscores)))
+tn$p16Up= tnscores$p16UP_signature_UCell
+
+tn$p16discrete= ifelse(tn$p16Up > quantile(tn$p16Up, 0.75), "P16High", "P16_Int")
+
+tn$p16discrete[tn$p16Up < quantile(tn$p16Up, 0.25)] <-  "P16Low"
+
+tn$Progression.Free.Status_binary <- ifelse(tn$Progression.Free.Status=="0:CENSORED",0,1)
+#P16Low should be tn$p16Up < quantile(tn$p16Up, 0.25)
+
+fit <- survfit(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn)
+library(survminer)
+pdf(paste0(SURVdir,"/SurvivalPlot_DiseaseFreeMonths_P16Discrete_log08_Diff20.pdf"), height = 5, width = 5)
+ p=ggsurvplot(fit,
+          pval = TRUE, conf.int = FALSE,
+          risk.table = FALSE, 
+          risk.table.col = "strata",
+          linetype = "strata", 
+          surv.median.line = "hv", 
+          ylab="Overall surrival",
+          ggtheme = theme_bw(), 
+          palette = c("#DED5D5", "#262424", "#756F6F")) 
+ print(p)
+dev.off()
+#######################
+res <- pairwise_survdiff(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn) ##Log-Rank test
+writexl::write_xlsx(as.data.frame(res$p.value), paste0(SURVdir, "/Survival_PvalComp_P16highlowint_LogRankTest_BH.xlsx"))
+```
+
+
+```{r}
+#####Distribution pf P16:
+pdf(paste0(SURVdir,"/P16Discrete_log08_Diff20_Distribution.pdf"), height = 5, width = 5)
+
+tn %>%  ggplot(aes(x=Study.ID, y=p16Up, fill= "grey")) + geom_boxplot(fill="grey", alpha=0.1) + ylab("P16Signature_UCell")  + ylab("UCELL_Up in P16 Signature")  +geom_jitter(data=tn,aes(x=Study.ID, y=p16Up,color= p16discrete), size=3, alpha=0.6)  + geom_hline(yintercept=quantile(tn$p16Up, 0.75), linetype="dashed",  color = "red", size=2) + scale_color_manual(values=c("#DED5D5", "#262424", "#756F6F"))+ gtheme + themplot+ theme(legend.position = "none")
+dev.off()
+```
+
+CHECK:
+
+```{r}
+  qtl=list("quantile"=NA, "hazard"=NA, "waldtest"=NA,  "hazard_upper"=NA, "hazard_lower"=NA,"waldtestPval"=NA)
+for(i in seq(0.1, 0.9, 0.01)){
+  tn$p16discrete=  ifelse(tn$p16Up  > quantile(tn$p16Up , i), 1, 0 )
+   res.cox <- summary(coxph(Surv(Disease.Free..Months.,Progression.Free.Status_binary ) ~ p16discrete, data = tn))
+   
+  qtl$quantile= append(qtl$quantile, i)
+  qtl$hazard=append(qtl$hazard,res.cox$coefficients[,2])
+  ##
+  qtl$hazard_upper=append(qtl$hazard_upper,res.cox$conf.int[,4] )
+  qtl$hazard_lower=append(qtl$hazard_lower,res.cox$conf.int[,3] )
+  
+  
+  qtl$waldtest= append(qtl$waldtest,res.cox$logtest[1] )
+   qtl$waldtestPval= append(qtl$waldtestPval,res.cox$logtest[3] )
+   
+   qtl$waldtest= append(qtl$waldtest,res.cox$logtest[1] )
+   qtl$waldtestPval= append(qtl$waldtestPval,res.cox$logtest[3] )
+   qtl$logTestPval= append(qtl$logTestPval,res.cox$logtest[3] )
+}
+
+dt.qtl_binary= do.call(rbind, qtl) %>% t() %>%  as.data.frame()
+dt.qtl_binary=dt.qtl_binary[-1,]
+
+##PLOT IT:
+l= list("MinPval_PANCANCER"=dt_qtl_b, "LikelihoodTest_PANCANCER"=dt.qtl_binary)
+writexl::write_xlsx(l, paste0(RdataDir, "/PANCANER_Threshold_Methodologyset.xlsx"))
+```
+
+```{r}
+qtl=list("quantile"=NA, "min_Pvalue"=NA)
+for(i in seq(0.1, 0.9, 0.01)){
+
+    tn$p16discrete=  ifelse(tn$p16Up  > quantile(tn$p16Up , i), 1, 0 )
+  
+    
+  res <- pairwise_survdiff(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn)
+  qtl$quantile= append(qtl$quantile, i)
+  qtl$min_Pvalue= append(qtl$min_Pvalue, min(na.omit(res$p.value)))
+  
+}
+dt_qtl_b=do.call( rbind, qtl) %>% t() %>%  as.data.frame()
+dt_qtl_b=dt_qtl_b[-1,]
+####
+
+
+library(survival)
+ tn$p16discrete=  ifelse(tn$p16Up > quantile(tn$p16Up , 0.75), 1, 0 )
+fit <- survfit(Surv(Disease.Free..Months.,Progression.Free.Status_binary) ~ p16discrete, data = tn)
+
+pdf(paste0(RdataDir, "/SurvCurve_BestPvalue_Thr75_PANCANCER.pdf"))
+ p=ggsurvplot(fit,
+          pval = TRUE, conf.int = FALSE,
+          risk.table = FALSE, 
+          risk.table.col = "strata",
+          linetype = "strata", 
+          surv.median.line = "hv", 
+          ylab="OS_0.75",
+          ggtheme = theme_bw(), 
+          palette = c("#DED5D5", "#262424", "#756F6F")) 
+ print(p)
+ dev.off()
+```
+
+Plot P value evaluation:
+```{r}
+m= dt.qtl_binary %>% filter( quantile >= 0.2 & quantile <= 0.8)
+pdf(paste0(plotDir, "/Plot_Pval_Quantile.pdf"))
+p <-m %>% ggplot(aes(x= quantile, y= -log10(waldtestPval))) + geom_point() + geom_smooth(method = "loess") + themplot
+print(p)
+
+g <-m %>% ggplot(aes(x= quantile, y= -log10(waldtestPval))) + geom_bar(stat="identity",fill="#FF6666", alpha=0.4)  + themplot + geom_vline(xintercept = 0.75, color="red")
+print(g)
+dev.off()
+
+```
+
+
+```{r}
+qtl=list("quantile"=NA, "hazard"=NA, "waldtest"=NA, "logRank"=NA, "hazard_upper"=NA, "hazard_lower"=NA, "Pv"=NA)
+for(i in seq(0.1, 0.9, 0.01)){
+  tn$p16discrete=  ifelse(tn$p16Up > quantile(tn$p16Up, i), 1,ifelse(tn$p16Up < quantile(tn$p16Up, (1-i)), -1, 0 ))
+
+  
+   res.cox <- coxph(Surv(Disease.Free..Months.,Progression.Free.Status_binary ) ~ p16discrete, data = tn, ties="exact")
+   
+  qtl$quantile= append(qtl$quantile, i)
+  qtl$hazard=append(qtl$hazard,exp(res.cox$coefficients) )
+  ##
+  qtl$hazard_upper=append(qtl$hazard_upper,summary(res.cox)$conf.int[,4] )
+  qtl$hazard_lower=append(qtl$hazard_lower,summary(res.cox)$conf.int[,3] )
+  
+  
+  qtl$waldtest= append(qtl$waldtest,res.cox$wald.test )
+  qtl$logRank=append(qtl$logRank,res.cox$score )
+  qtl$Pv = append(qtl$Pv, summary(res.cox)$coefficients[,5])
+}
+
+dt.qtl_mcTCGA= do.call(rbind, qtl) %>% t() %>%  as.data.frame()
+dt.qtl_mcTCGA=dt.qtl_mcTCGA[-1,]
+
+qs::qsave(dt.qtl_mc,paste0(RdataDir, "/Quantile_MultiClasses_Basal_HazardRatio.qs"))
+```
