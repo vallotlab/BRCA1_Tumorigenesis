@@ -1,0 +1,671 @@
+---
+title: "Step3_DiffExpression_PEA"
+author: "Melissa"
+date: "6/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+```{r}
+epith= qs::qread(paste0(RDatadir,"/Epithelial_FinalAnnotation.qs"))
+```
+
+#-------------------------- PROCESSING OF DIFF EXPRESSION -------------------------#
+
+ POOL LP/AVD AND COMPARE THEM TO P16+ AVD:
+
+HAVE A LOOK AT GENES UP in P16 vs LP/Avd
+```{r}
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+Idents(epith)= "subtype"
+p16=FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), logfc.threshold = 0.8, only.pos = T) %>% dplyr::filter(., p_val_adj < 0.05) %>% rownames_to_column(., "gene")
+##
+p16n=FindMarkers(epith, ident.2 = "P16+ Pre-lesional", ident.1 = c("LP","Avd"), logfc.threshold = 0.5, only.pos = T) %>% dplyr::filter(., p_val_adj < 0.05) %>% rownames_to_column(., "gene")
+```
+
+
+##### Obtain the Upregulated/ Downregulated genes #######
+```{r}
+pag=enricher(p16$gene , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+pag$geneID=gsub("/",",", pag$geneID)
+
+dag=enricher(p16n$gene , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+dag$geneID=gsub("/",",", dag$geneID)
+```
+
+
+Save the files:
+```{r}
+mylist= list(p16, pag, p16n, dag)
+names(mylist)= c("UP_P16vsLP_AVD", "PEA_UPP16","Down_P16vsLP_AVD", "PEA_DP16" )
+writexl::write_xlsx(mylist, paste0(figDir,"/TOP_DEG_P16_vsBOTH_LP_AVD.xlsx"))
+```
+
+```{r}
+rm(pag); rm(dag); rm(p16); rm(p16n)
+```
+
+
+Add other databases:
+
+```{r}
+DefaultAssay(epith)="RNA"
+Idents(epith)="subtype"
+comph= FindMarkers(epith, ident.1 = "p16_cycling", ident.2 = c("LP","Avd"), only.pos = T, logfc.threshold = 0.5) %>% dplyr::filter( p_val_adj < 0.05)
+comph$gene= rownames(comph)
+comph= comph  %>% arrange(desc(avg_log2FC))
+############
+compd= FindMarkers(epith, ident.2 = "p16_cycling", ident.1 = c("LP","Avd"), only.pos = T, logfc.threshold = 0.5)
+compd= compd %>% filter( p_val_adj < 0.05)
+compd$gene= rownames(compd)
+compd= compd  %>% arrange(desc(avg_log2FC))
+##########
+m_t2g <- msigdbr(species = "Mus musculus", category = "C2") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+##
+pag=enricher(rownames(comph) , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+
+dag=enricher(rownames(compd) , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+###########
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+##
+pagH=enricher(rownames(comph) , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+
+dagH=enricher(rownames(compd) , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+#############
+mylist= list(comph,pagH, pag, compd,dagH, dag)
+
+names(mylist)= c("UP_PreT_vsLPAvd", "PEA_H_UP_preT_vsLPAvd","PEA_C2_UP_preT_vsLPAvd","DN_P16_vsLPAvd", "PEA_H_P16_vsLPAvd","PEA_C2_P16_vsLPAvd" )
+
+writexl::write_xlsx(mylist, paste0(figDir,"/DEG_PEA_PreT_vsLPAvd_05.xlsx"))
+```
+
+```{r}
+dag$type="Down"
+pag$type="Up"
+
+ag=rbind(dag, pag)
+ag$log=-log10(ag$p.adjust)
+
+ag$log= ifelse(ag$type=="Down", -1*ag$log, ag$log)
+
+pdf(paste0(figDir, "/Barplot_PEA_p16_LPAvd.pdf"))
+p=ggplot(ag, aes(x = reorder(ID, log), y = log)) +
+  geom_bar(stat = "identity")  +
+  coord_flip() + themplot
+print(p)
+dev.off()
+```
+
+
+
+
+```{r}
+rm(comph); rm(comph); rm(pag); rm(dag)
+```
+
+
+#-------------------- FIG1 -------------------------------------#
+Volcano plot representation:
+
+Include also the less significant genes to be included in the volcano
+```{r}
+Idents(epith)="subtype" #make sure the subtype is set as Default Ident Or precise group.by="subtype
+res= FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), group.by="subtype",only.pos = F, logfc.threshold = 0.1) 
+```
+
+```{r}
+keyvals.colour <- ifelse(
+    res$avg_log2FC < -1, "forestgreen", 
+      ifelse(res$avg_log2FC > 1, "#A82A2A", 
+        'grey'))
+names(keyvals.colour)=rownames(res)
+
+  keyvals.colour[is.na(keyvals.colour)] <- 'grey'
+  names(keyvals.colour)[keyvals.colour == "#A82A2A"] <- 'high'
+  names(keyvals.colour)[keyvals.colour == 'grey'] <- 'mid'
+  names(keyvals.colour)[keyvals.colour == "forestgreen"] <- 'low'
+  
+#alternative
+  keyvals.colour <- ifelse(
+    res$avg_log2FC < -1, "darkslategrey", 
+      ifelse(res$avg_log2FC > 1, "darkslategrey", 
+        'grey'))
+names(keyvals.colour)=rownames(res)
+  
+```
+
+```{r}
+pdf(file = paste0(DEdir, "/VolcanoPlot_DEG_P16_avdLP_WOLegendTopFC1_2_Pval_3.pdf"),width = 10, height = 8)
+
+  p <- EnhancedVolcano(res,
+    lab = rownames(res),
+    x =  "avg_log2FC",
+    y = "p_val_adj",
+    xlab = bquote(~Log[2]~ 'fold change'),
+    selectLab = rownames(res)[which(res$p_val_adj < 1e-25 & abs(res$avg_log2FC) > 1.2)],
+    colCustom = keyvals.colour,
+    pCutoff = 10e-25,
+    FCcutoff = 1,
+    pointSize = 2.0,
+    labSize = 5.0,
+    colAlpha = 0.8,
+    cutoffLineType = "blank",
+    title = "",
+    subtitle = "",
+    caption = "",
+    #legend = NULL,
+    drawConnectors = TRUE,
+        widthConnectors = 0.75,
+        colConnectors = "grey",
+     gridlines.major = FALSE) + themplot + gtheme +  theme(legend.position = "none") #+ xlab("") +ylab("")
+print(p)
+  dev.off()  
+
+png(paste0(DEdir, "/VolcanoPlot_DEG_P16_avdLP_WOLegendTopFC1_2_Pval_3_wonames.png"), width = 1600,height = 1500, res=300)
+
+ggplot(res) +geom_poit(res$avg_log2FC,-log(res$p_val_adj,10),pch=21)
+
+  p<- EnhancedVolcano(res,
+                  lab="",
+    x =  "avg_log2FC",
+    y = "p_val_adj",
+    xlab = bquote(~Log[2]~ 'fold change'),
+    selectLab = rownames(res)[which(res$p_val_adj < 1e-25 & abs(res$avg_log2FC) > 1.2)],
+    colCustom = keyvals.colour,
+    pCutoff = 10e-25,
+    FCcutoff = 1,
+    pointSize = 2.0,
+    labSize = 6.0,
+    colAlpha = 0.8,
+    cutoffLineType = "blank",
+    title = "",
+    subtitle = "",
+    caption = "",
+    #legend = NULL,
+    drawConnectors = TRUE,
+        widthConnectors = 0.75,
+        colConnectors = "grey",
+     gridlines.major = FALSE) + themplot + gtheme +  theme(legend.position = "none") 
+print(p)
+  dev.off()  
+```
+
+
+Feature plot representation of the main markers lost/enriched in P16:
+#--------- SUPP FIG 2 -----------------------------#
+
+grep all the "Krt" to model loss identity
+
+```{r}
+coord= seu@reductions$umap@cell.embeddings %>% as.data.frame()
+coord= coord %>% filter(UMAP_2 > (-5)) %>% filter(UMAP_2 < 5.5)
+seu2= subset(seu, cells= rownames(coord))
+
+
+sg= c("Krt8" , "Krt19", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim")
+for (i in seq_len(length(sg))){
+    p<- better_gene_umap(seu2, sg, i, 2.75) 
+       png(paste0(DEdir, "/New_TopMarkers_P16Pop_",sg[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+```
+
+For the paper: July version
+```{r}
+sg= c("Krt8" , "Krt19", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim")
+for (i in seq_len(length(sg))){
+    p<- better_gene_umap(seu2, sg, i, 2.75) 
+       png(paste0(RDatadir, "/New_TopMarkers_P16Pop_",sg[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+sm <- c("Krt8" , "Krt5", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim","Lmna","Cdh2","Cdh1","Epcam", "Krt19","Cdkn2b", "Cdk4", "Igfbp4","Sparc","Ccnd1","Eif2s2","Tes")
+
+#sm <- c("Fn1", "Lgals1","Vim","Lmna")
+##To correct: the limits of the scale_color_viridis was limited to 5, needs to be the max of the gene expression value, see Csn2, otherwise you turn to grey highly expressing cells
+for (i in seq_len(length(sm))){
+    p<- better_gene_umap(seu2, sm, i, 3)  
+       png(paste0(RDatadir, "/New_TopMarkers_Subset_test_",sm[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+png(paste0(RDatadir, "/Naw_UMAP_CNV.png"), width = 2000, height = 2000, res = 300)
+g <-  FeaturePlot(seu2, features = "alteredGenome", pt.size=2.75) + 
+      geom_point(data= as.data.frame(seu2[["umap"]]@cell.embeddings) , aes(x =UMAP_1, y = UMAP_2, fill= seu2$alteredGenome,stroke=0.5), shape = 21,stroke=0.5, colour= "black", size=2.75 )   + scale_fill_viridis(option="B",limits = c(0.01, max(epith$alteredGenome)),  na.value= "grey",direction=-1) + NoLegend() + NoAxes() + ggtitle("")
+print(g)
+dev.off()
+```
+
+```{r}
+png(paste0(RDatadir, "/Naw_UMAP_Pseudotime.png"), width = 2000, height = 2000, res = 300)
+g <-  FeaturePlot(seu, features = "pseudotime", pt.size=2.75) + 
+      geom_point(data= as.data.frame(seu[["umap"]]@cell.embeddings) , aes(x =UMAP_1, y = UMAP_2, fill= seu$pseudotime,stroke=0.5), shape = 21,stroke=0.5, colour= "black", size=2.75 )   + scale_fill_viridis(option="D",limits = c(0.01, max(seu$pseudotime)),  na.value= "grey",direction=-1) + NoLegend() + NoAxes() + ggtitle("")
+print(g)
+dev.off()
+```
+
+
+
+SCATTER PLOT REPRESENTATION OF THE EVOLUTION OF PATHWAY SCORES ALONG PSEUDOTIME:
+```{r}
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+
+seu =qs::qread( paste0(RDatadir, "/SeuObj_Subset_WithPseudotime.qs"))
+pathway <- c("ANGIOGENESIS_UCell","EMT_UCell","APOPTOSIS_UCell","ESTROGEN_REPONSE_UCell" )
+dat <- sseu2@meta.data[,c("pseudotime", pathway)]
+dat$subtype=sseu2$subtype
+##
+for (i in seq(2,5)){
+    p <- ggplot(dat) + geom_point(aes(x= pseudotime, y= dat[,i], fill=subtype),shape=21,size=2.75,alpha=1,stroke=0.5)  + ggtitle("") +  geom_smooth(aes(pseudotime,dat[,i] ),method="loess", span=0.3) + scale_fill_manual(values=col[levels(sseu2)])+ themplot  + theme(legend.position="none") + NoAxes()
+    
+png(paste0(outputDir, "/New_Scatter_", pathway[i-1] ,".png"), width = 2000, height = 2000, res = 300)
+  print(p)
+  dev.off()
+} #RDatadir
+```
+
+FOR SUPP FIGURE, REPRESENT THE SAME PATHWAY SCORES ON THE SUBSET SEURAT OBJECT:
+```{r}
+##Alternative 1:
+dat <- sseu2@meta.data[,pathway]
+umap_coord= as.data.frame(sseu2[["umap"]]@cell.embeddings)
+stopifnot(identical(rownames(umap_coord), rownames(dat)))
+dat=cbind(dat, umap_coord)
+###
+
+for (i in seq(1,4)){
+    p <- ggplot(dat) + geom_point(aes(x= UMAP_1, y= UMAP_2, fill=dat[,i]),shape=21,size=2.75,alpha=1,stroke=0.5)  + ggtitle("")+ scale_fill_viridis(option="B",limits = c(0, max(dat[,i])), na.value= "grey",direction=-1) +themplot + theme(legend.position="none") + NoAxes()
+    
+png(paste0(outputDir, "NEW_UMAP_SUBSET_Pathways_WOLegend_MainPathways_", pathway[i] ,".png"), width = 2000, height = 2000, res = 300)
+  print(p)
+  dev.off()
+}
+
+```
+#--------- FIG 2 -----------------------------# 
+
+```{r}
+Idents(epith)="subtype"
+seu=subset(epith, idents= c("LP","Avd","P16+ Pre-lesional","Cytl1+ ST","Fgf8+ ST","Spp1+ ST", "Mki67+ ST" ))
+levels(seu) = c("LP","Avd","P16+ Pre-lesional","Mki67+ ST","Cytl1+ ST","Fgf8+ ST","Spp1+ ST" )
+```
+
+Umap colors on the subset:
+```{r}
+sm <- c("Krt8" , "Krt5", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim","Lmna","Cdh2","Cdh1","Epcam", "Krt19")
+
+sm <- c("Fn1", "Lgals1","Vim","Lmna")
+##To correct: the limits of the scale_color_viridis was limited to 5, needs to be the max of the gene expression value, see Csn2, otherwise you turn to grey highly expressing cells
+for (i in seq_len(length(sm))){
+    p<- better_gene_umap(seu, sm, i, 3)  + ylim(-10,5) + xlim(-10,0)
+       png(paste0(DEdir, "/TopMarkers_Subset_test_",sm[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+##other representation
+umap_custom <- as.data.frame(seu[["umap"]]@cell.embeddings)
+draw <- sample(1:dim(umap_custom)[1])
+
+for (i in seq_len(length(sm))){
+  color_quanti <- seu@assays$RNA[sm[i]]
+  p <- ggplot(umap_custom, aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 3, stroke=0.8, shape = 21,aes(fill=  color_quanti[1,])) + theme_classic() + scale_fill_viridis(option="B",na.value= "grey",alpha=1,limits = c(0.1, max(color_quanti[1,])),direction=-1)+ NoAxes() + NoLegend()  + ylim(-10,5) + xlim(-10,0) 
+
+  png(paste0(mainDir, "/TopMarkers_Subset_Test2_",sm[i]  ,".png"), height=2000, width = 2000,res=300)
+          print(p)
+          
+          dev.off()
+          
+}
+```
+
+Umap colors on the subset including the basal cells:
+```{r}
+seu= subset(epith, idents= c("Basal","Luminal H-S","LP","Avd","P16+ Pre-lesional","Cytl1+ ST","Fgf8+ ST","Spp1+ ST", "Mki67+ ST" ))
+
+sm <- c("Krt8" , "Krt5", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim","Lmna","Cdh2","Cdh1","Epcam")
+for (i in seq_len(length(sm))){
+    p<- better_gene_umap(seu, sm, i, 2)  + ylim(-15, 5) 
+       png(paste0(DEdir, "/TopMarkers_WOBasal_Subset_",sm[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+```
+
+
+#--------- SUPP FIG 2 -----------------------------# 
+
+Plot other genes on the subset:
+```{r}
+seu= qs::qread("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/scRNAseq/invivo/RData/EpithelialSubset_forPseudotime.qs")
+seu= subset(seu, idents = c("LP", "Avd", "P16+ Pre-lesional","Mki67+ ST","Cytl1+ ST","Fgf8+ ST"))
+
+
+sm=c("Twist1", "Twist2")
+
+for (i in seq_len(length(sm))){
+    p<- better_gene_umap(seu, sm, i, 2)  + ylim(-5, 5) 
+       png(paste0(DEdir, "/UMAP_Subset_TopMarkers_Sup1_",sm[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+
+sm <- c("Krt8" , "Krt5", "Krt18","Csn2" ,"Cdkn2a","Fn1", "Lgals1","Vim","Lmna","Cdh2","Cdh1","Epcam")
+
+for (i in seq_len(length(sm))){
+    p<- better_gene_umap(seu, sm, i, 2)  + ylim(-5, 5) 
+       png(paste0("C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/UMAP_Subset_TopMarkers_Sup2_",sm[i]  ,".png"), width = 2000, height = 2000, res = 300)
+          print(p)
+        dev.off()
+}
+
+```
+
+
+
+
+Enrichment with C2: taking threshold as 0.5
+```{r}
+m_t2g <- msigdbr(species = "Mus musculus", category = "C2") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+###
+comph= FindMarkers(epith, ident.1 = "P16+ Pre-lesional", ident.2 = c("LP","Avd"), only.pos = F, logfc.threshold = 0.5 ) %>% dplyr::filter( p_val_adj < 0.05) %>% rownames_to_column("gene")
+###
+up= comph %>% dplyr::filter(avg_log2FC > 0)
+up2 <- enricher(up$gene , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+g1 = up2 %>% dplyr::filter(ID %in% grep("SENESCENCE", up2$ID, value = T))
+g2 = up2 %>% dplyr::filter(ID %in% grep("BREAST_CANCER", up2$ID, value = T))
+g3 = up2 %>% dplyr::filter(ID %in% grep("MAMMARY", up2$ID, value = T))
+upc2= rbind(g1, g2, g3)
+upc2$term= c(rep("Senescence", nrow(g1)), rep("Breast Cancer", nrow(g2)), rep("Mammary gland", nrow(g3)))
+rownames(upc2)=NULL
+upc2$geneID= gsub("/", ",", upc2$geneID)
+###
+write.csv(upc2, paste0(DEdir, "/MsigDB_C2_filtered_Up_p16vsLP_Avd.csv"))
+```
+
+
+Contingency matrix of cluster distribution:
+```{r}
+ct <- as.data.frame.matrix(table(epith$subtype, epith$orig.ident))
+writexl::write_xlsx(ct,paste0(annotDir, "/ContingencyTable_Subtype_SampleOfOrigin.xlsx") )
+```
+
+##Test :
+
+Include also the less significant genes to be included in the volcano
+```{r}
+Idents(epith)="subtype" #make sure the subtype is set as Default Ident Or precise group.by="subtype
+res= FindMarkers(epith, ident.1 = "p16_cycling", ident.2 = c( "LP", "Avd"), group.by="subtype",only.pos = F, logfc.threshold = 0.25) 
+res$gene=rownames(res)
+writexl::write_xlsx(res, paste0(annotDir, "/DEG_P16_vs_LPAvdBasal.xlsx"))
+```
+
+```{r}
+keyvals.colour <- ifelse(
+    res$avg_log2FC < (-1.7), "forestgreen", 
+      ifelse(res$avg_log2FC > 1.5, "#A82A2A", 
+        'grey'))
+names(keyvals.colour)=rownames(res)
+
+  keyvals.colour[is.na(keyvals.colour)] <- 'grey'
+  names(keyvals.colour)[keyvals.colour == "#A82A2A"] <- 'high'
+  names(keyvals.colour)[keyvals.colour == 'grey'] <- 'mid'
+  names(keyvals.colour)[keyvals.colour == "forestgreen"] <- 'low'
+  
+#alternative
+  keyvals.colour <- ifelse(
+    res$avg_log2FC < (-1.7), "darkslategrey", 
+      ifelse(res$avg_log2FC > 1.5, "darkslategrey", 
+        'grey'))
+names(keyvals.colour)=rownames(res)
+  
+```
+
+```{r}
+
+pdf(file = paste0(figDir, "/VolcanoPlot_DEG_P16_avdLP_Basal.pdf"),width = 10, height = 8)
+
+  p <- EnhancedVolcano(res,
+    lab = rownames(res),
+    x =  "avg_log2FC",
+    y = "p_val_adj",
+    xlab = bquote(~Log[2]~ 'fold change'),
+    selectLab = rownames(res)[which(res$p_val_adj < 1e-25 & abs(res$avg_log2FC) > 1.2)],
+    colCustom = keyvals.colour,
+    pCutoff = 10e-25,
+    FCcutoff = 1,
+    pointSize = 2.0,
+    labSize = 5.0,
+    colAlpha = 0.8,
+    cutoffLineType = "blank",
+    title = "",
+    subtitle = "",
+    caption = "",
+    #legend = NULL,
+    drawConnectors = TRUE,
+        widthConnectors = 0.75,
+        colConnectors = "grey",
+     gridlines.major = FALSE) + themplot + gtheme +  theme(legend.position = "none") #+ xlab("") +ylab("")
+print(p)
+  dev.off()  
+```
+
+
+Pathway enriched in the signature:
+```{r}
+
+DefaultAssay(epith)="RNA"
+Idents(epith)="subtype"
+comph= FindMarkers(epith, ident.1 = "p16_cycling", ident.2 = c("LP","Avd"), only.pos = T, logfc.threshold = 0.5) %>% dplyr::filter( p_val_adj < 0.05) %>% rownames_to_column("gene")
+
+comph= comph  %>% arrange(desc(avg_log2FC))
+############
+compd= FindMarkers(epith, ident.2 = "p16_cycling", ident.1 = c("LP","Avd"), only.pos = T, logfc.threshold = 0.8)  %>% rownames_to_column("gene") %>% filter( p_val_adj < 0.05)
+compd= compd  %>% arrange(desc(avg_log2FC))
+##########
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+##
+library(clusterProfiler)
+pag=enricher(comph$gene , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+
+dag=enricher(compd$gene , TERM2GENE=m_t2g) @result %>% dplyr::filter(., p.adjust< 0.05)%>% .[,c(1,6,8)]
+#############
+mylist= list(comph, pag, compd, dag)
+names(mylist)= c("UP_P16_vsLPAvd", "PEA_H_UP_P16_vsLPAvdBasal","DN_P16_vsLPAvdBasal", "PEA_H_P16_vsLPAvdBasal" )
+
+writexl::write_xlsx(mylist, paste0(figDir,"/Hallmark_Msig_DEG_P16_LP_Avd.xlsx"))
+
+pag=readxl::read_excel(paste0(figDir,"/Hallmark_Msig_DEG_P16_LP_Avd.xlsx"), sheet=2)
+dag=readxl::read_excel(paste0(figDir,"/Hallmark_Msig_DEG_P16_LP_Avd.xlsx"), sheet=3)
+```
+
+CONSTRUCT GENE SIGNATURES:
+
+
+Construct gene signatures:
+```{r}
+features=list()
+
+features$EMT= c(unlist(strsplit(pag[which(pag$ID=="HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION"),3], "/")))
+features$MYC_TARGETS= c(unlist(strsplit(pag[which(pag$ID=="HALLMARK_MYC_TARGETS_V1"),3], "/")))
+features$E2F_TARGETS= c(unlist(strsplit(pag[which(pag$ID=="HALLMARK_E2F_TARGETS"),3], "/")))
+features$ANGIOGENESIS= c(unlist(strsplit(pag[which(pag$ID=="HALLMARK_ANGIOGENESIS"),3], "/")))
+
+
+features$TNFA_SIGNALING_VIA_NFKB= c(unlist(strsplit(dag[which(dag$ID=="HALLMARK_TNFA_SIGNALING_VIA_NFKB"),3], "/")))
+
+features$HYPOXIA= c(unlist(strsplit(dag[which(dag$ID=="HALLMARK_HYPOXIA"),3], "/")))
+
+features$APOPTOSIS= c(unlist(strsplit(dag[which(dag$ID=="HALLMARK_APOPTOSIS"),3], "/")))
+
+features$P53_PATHWAY= c(unlist(strsplit(dag[which(dag$ID=="HALLMARK_P53_PATHWAY"),3], "/")))
+
+epith@meta.data=epith@meta.data[, -seq(19,24)]
+
+### Construct signatures:
+library(UCell)
+library(data.table)
+
+epith=UCell::AddModuleScore_UCell(obj = epith, features = features )
+
+qs::qsave(epith, file.path(RDatadir,"Epithelial_Only_KeepF_NoCreN_SubtypeAnnotated.qs"))
+
+s1@meta.data=s1@meta.data[, -seq(19,24)]
+
+s1=UCell::AddModuleScore_UCell(obj = s1, features = features )
+qs::qsave(s1, file.path(RDatadir,"Subset_Epithelial_Only_KeepF_NoCreN_SubtypeAnnotated.qs"))
+##
+all(colnames(seu)== rownames(dat_use_df))
+seu=subset(s1, cells=rownames(dat_use_df))
+seu$pseudotime= dat_use_df$pseudotime
+```
+
+
+Umap representation the pathway scores
+```{r}
+pathway= paste0(names(features), "_UCell")
+##Alternative 1:
+dat <- epith@meta.data[,pathway]
+umap_coord= as.data.frame(epith[["umap"]]@cell.embeddings)
+stopifnot(identical(rownames(umap_coord), rownames(dat)))
+dat=cbind(dat, umap_coord)
+###
+
+for (i in seq(1,length(pathway))){
+    p <- ggplot(dat) + geom_point(aes(x= UMAP_1, y= UMAP_2, fill=dat[,i]),shape=21,size=2,alpha=1,stroke=0.5)  + ggtitle("")+ scale_fill_viridis(option="B",limits = c(0, max(dat[,i])), na.value= "grey",direction=-1) +themplot + theme(legend.position="none") + NoAxes()
+    
+png(paste0(figDir, "/Fig1H_UMAP_epith_Pathways_WOLegend_MainPathwaysFinal_", pathway[i] ,".png"), width = 2000, height = 2000, res = 300)
+  print(p)
+  dev.off()
+}
+
+
+
+###aLTERNATIVE 2:
+p<- FeaturePlot(epith, pathway,combine=F, pt.size = 0.75 )
+for(i in 1:length(p)) {
+  p[[i]] <- p[[i]] + scale_color_viridis(option="B",limits = c(0, 1), na.value= "grey",direction=-1) + NoLegend() + NoAxes() + ggtitle("")
+  p[i][[1]]$layers[[1]]$aes_params$alpha = 0.4}
+g <-cowplot::plot_grid(plotlist = p, ncol = 4) 
+
+png(paste0(slingshotDir, "/UMAP_epith_Pathways_WOLegend_MainPathways2.png"),width = 4000, height = 1000, res = 300)
+print(g)
+dev.off()
+```
+
+FOR SUPP FIGURE, REPRESENT THE SAME PATHWAY SCORES ON THE SUBSET SEURAT OBJECT:
+```{r}
+##Alternative 1:
+dat <- s1@meta.data[,pathway]
+umap_coord= as.data.frame(s1[["umap"]]@cell.embeddings)
+stopifnot(identical(rownames(umap_coord), rownames(dat)))
+dat=cbind(dat, umap_coord)
+###
+
+for (i in seq(1,length(pathway))){
+    p <- ggplot(dat) + geom_point(aes(x= UMAP_1, y= UMAP_2, fill=dat[,i]),shape=21,size=3,alpha=1,stroke=0.5)  + ggtitle("")+ scale_fill_viridis(option="B",limits = c(0, max(dat[,i])), na.value= "grey",direction=-1) +themplot + theme(legend.position="none") + NoAxes()
+    
+png(paste0(figDir, "/Fig1H_Bis_UMAP_SUBSET_Pathways_WOLegend_Final_", pathway[i] ,".png"), width = 2000, height = 2000, res = 300) #width = 1200, height = 1200, res = 300
+  print(p)
+  dev.off()
+}
+
+```
+
+
+Vln plot:
+```{r}
+library(stringr)
+epith$metaSub= epith$subtype
+epith$metaSub = str_sub(epith$metaSub, -3,-1)
+epith$metaSub= dplyr::recode(epith$metaSub,"sal"="Basal",
+                             "ing"= "p16_cycling",
+                             "412"="Isg15pLes",
+                             "H-S"="Luminal H-S","T_1"= "T","T_2"="T")
+qs::qsave(epith, file.path(RDatadir,"Epithelial_Only_KeepF_NoCreN_SubtypeAnnotated.qs"))
+```
+
+```{r}
+pathway= grep("_UCell", colnames(epith@meta.data), value = T)
+
+epith$metaSub<- factor(x = epith$metaSub,levels=c("Basal", "Luminal H-S","Avd", "LP", "p16_cycling","Isg15pLes", "T"))
+    
+col_metasub=c(new_col,"Isg15pLes"= "#50f581ff" ,"T"="#597EC2" )
+
+for (i in seq(1,length(pathway))){
+    p <- VlnPlot(epith, group.by = "metaSub", features = pathway[i], stack = FALSE, cols = col_metasub, pt.size = 0)+themplot + NoLegend() +  stat_summary(fun.y=median, geom="point", size=8, color="white" ,shape = 95) + ggtitle(pathway[i])
+    
+png(paste0(figDir, "/Fig1_Vln_Metasub_Pathways_Final_", pathway[i] ,".png"), width = 2000, height = 2000, res = 300) #width = 1200, height = 1200, res = 300
+  print(p)
+  dev.off()
+}
+
+##pdf
+for (i in seq(1,length(pathway))){
+    p <- VlnPlot(epith, group.by = "metaSub", features = pathway[i], stack = FALSE, cols = col_metasub, pt.size = 0)+themplot + NoLegend() +  stat_summary(fun.y=median, geom="point", size=8, color="white" ,shape = 95) + ggtitle(pathway[i])
+    
+pdf(paste0(figDir, "/Fig1_Vln_Metasub_Pathways_Final_", pathway[i] ,".pdf"), width = 10, height = 10) #width = 1200, height = 1200, res = 300
+  print(p)
+  dev.off()
+}
+```
+
+
+
+
+get cell cycle related genes:
+```{r}
+Idents(epith)="subtype"
+DefaultAssay(epith)="RNA"
+
+Idents(epith)="subtype" #make sure the subtype is set as Default Ident Or precise group.by="subtype
+res= FindMarkers(epith, ident.1 = "p16_cycling", ident.2 = c( "LP", "Avd"), group.by="subtype",only.pos = F, logfc.threshold = 0.25) 
+res$gene=rownames(res)
+
+ccgenes=c(grep("^Cdk", res$gene, value = TRUE),grep("^Ccnd", res$gene, value = TRUE))[c(1:3,6,8,10,11,12)]
+ccgenes=ccgenes[-6]
+
+epith$subtype<- factor(x = epith$subtype,levels=rev(c("Basal", "Luminal H-S", "LP", "Avd","p16_cycling","Isg15+ GCreP_L_7412", "Hist1h2ap+ T_1","Spp1+ T_1","Emp1+ T_1","Apod+ T_1" ,"Mgp+ T_1","S100a6+ T_2","Cav2+ T_2","Tes+ T_2" , "Lgals1+ T_2" ,"Col1a2+ T_2","S100a4+ T_2" ,"Lcn2+ T_2"  )))
+
+p=VlnPlot(epith, features = ccgenes, group.by = "subtype", stack = TRUE)+NoLegend()
+pdf(file.path(figDir, "VlnPlot_CCgenes_Subtype2.pdf"))
+print(p)
+dev.off()
+#############################
+epith$metaSub<- factor(x = epith$metaSub,levels=rev(c("Basal", "Luminal H-S", "LP", "Avd","p16_cycling","Isg15pLes", "T")))
+
+p=VlnPlot(epith, features = ccgenes, group.by = "metaSub", stack = TRUE)+NoLegend()
+pdf(file.path(figDir, "VlnPlot_CCgenes_Metasub.pdf"))
+print(p)
+dev.off()
+```
+
+```{r}
+Idents(epith)="subtype"
+DefaultAssay(epith)
+
+s1= subset(epith, idents= c("LP" ,"Hist1h2ap+ T_1","Avd","p16_cycling","Emp1+ T_1", "Apod+ T_1",  "Mgp+ T_1","Isg15+ GCreP_L_7412","Luminal H-S"))
+
+emb=Embeddings(s1, reduction = "umap") %>% as.data.frame()
+emb= emb %>% dplyr::filter(., UMAP_2 < (3.5) & UMAP_1 > (-1))
+#emb= emb %>% dplyr::filter(., UMAP_2 > (-5) & UMAP_2 < 5 & UMAP_1 < (-3))
+s1= subset(s1, cells= rownames(emb))
+
+p <- VlnPlot(s1, features = ccgenes, group.by = "subtype", stack = TRUE, cols = new_col[unique(s1$subtype)],)
+```

@@ -1,0 +1,528 @@
+---
+title: "Step3_6_Hetmap_Alterations"
+author: "Melissa"
+date: "04/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+###############WORK ON THE ST SAMPLE ##############
+```{r}
+obs <- read.table(paste0(cnvDir,"/infercnv.observations.txt")) %>% as.matrix()
+colnames(obs) = gsub("[.]1","-1", colnames(obs))
+mat <- obs
+```
+
+isolate alteration genome for ST:
+
+```{r}
+md <- epith@meta.data[which(colnames(epith) %in% colnames(st)), c(14,21,24,25,38)]
+###
+ccst <- qs::qread(paste0(occDir,"/ConsensusClustering_Result_ST_CNV.qs"))
+kp= ccst[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+pc= pc %>% column_to_rownames("cell")
+all(rownames(pc)== rownames(md))
+pc=pc[rownames(md),]
+md$k= pc$kp
+```
+
+```{r}
+pc=pc[rownames(md),]
+n <- rownames(pc)
+pc=as.data.frame(pc[,1], row.names = n)
+colnames(pc)="kp"
+```
+
+
+```{r}
+## genes ###
+ g=ic_st@gene_order[,1] %>% as.data.frame()
+   rownames(g)=rownames(ic_st@gene_order)
+  colnames(g)="chromosome"
+###
+colgene= colorRampPalette(brewer.pal(6, "Dark2"))(length(unique(g$chromosome)))
+names(colgene)=unique(g$chromosome)
+### cells ####
+all(colnames(mat) == colnames(st))
+
+##
+mat = mat[,colnames(st)]
+all(colnames(mat) == colnames(st))
+
+#### colors ####
+ breaks <- c(seq(0.7, 0.99, length.out = 101),seq(1,1.3, length.out = 101))
+
+pc$kp=as.character(pc$kp)
+#k=c("#C294C2", "#B16BB3", "#F277F2", "#A65DA0") 
+k=c("#CBC2CC", "#B16BB3", "#F277F2", "#A65DA0")
+names(k)= as.character(seq_len(4))
+
+wtlcol=list( k, colgene)
+names(wtlcol)=c("kp", "chromosome")
+```
+
+```{r}
+png(file = paste0(hDir, "/HEATMAP_ST_Bright_3.png") ,height=1300,width=1300,res=300)
+
+ pheatmap::pheatmap(mat, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, breaks= breaks,color = colorRampPalette(c("navy", "white", "firebrick3"))(202),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation",
+annotation_names_row=T) 
+dev.off()
+###
+png(file = paste0(hDir, "/HEATMAP_ST_Bright_5.png") ,height=1500,width=1500,res=300)
+
+ pheatmap::pheatmap(mat, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, breaks= breaks,color = colorRampPalette(c("navy", "white", "firebrick3"))(202),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation",
+annotation_names_row=T) 
+dev.off()
+```
+
+
+Do it for P16:
+
+```{r}
+obs1 <- read.table(paste0(ostcnvDir,"/infercnv.observations.txt")) %>% as.matrix()
+colnames(obs1) = gsub("[.]1","-1", colnames(obs1))
+```
+
+
+```{r}
+p16= obs1[,which(colnames(obs1) %in% rownames(cnt@meta.data)[which(cnt$subtype=="P16+ Pre-lesional")]  )]
+md <- epith@meta.data[which(colnames(epith) %in% colnames(p16)), c(14,21,24,25,38)]
+md=md[colnames(p16),]
+#####
+ccp <- qs::qread(paste0(occDir,"/CC_Cntr_Cnv_P16/ConsensusClustering_Result_CNV_p16.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+all(rownames(pc)== rownames(md))
+pc=pc[rownames(md),]
+md$k= pc$kp
+```
+
+
+```{r}
+n <- rownames(pc)
+pc=as.data.frame(pc[,1], row.names = n)
+colnames(pc)="kp"
+pc$kp=as.character(pc$kp)
+```
+
+```{r}
+# genes ###
+ g=ic_cnt@gene_order[,1] %>% as.data.frame()
+   rownames(g)=rownames(ic_cnt@gene_order)
+  colnames(g)="chromosome"
+###
+colgene= colorRampPalette(brewer.pal(6, "Dark2"))(length(unique(g$chromosome)))
+g$chromosome=as.character(g$chromosome)
+names(colgene)=unique(g$chromosome)
+####################
+
+ breaks <- c(seq(0.7, 0.99, length.out = 101),seq(1,1.3, length.out = 101))
+ #breaks <- c(seq(0, 1, length.out = 101),seq(1.01,2, length.out = 101))
+
+k <- c("#818F72", "#C7DEC1", "#A0D439", "#B0F24E")
+names(k)= as.character(seq_len(4))
+wtlcol=list( colgene,  k)
+names(wtlcol)= c("chromosome","kp")
+###Plot the heatmap:
+stopifnot(colnames(p16)== rownames(pc))
+
+#stopifnot(colnames(p16)== rownames(md))
+
+  png(file = paste0(hDir, "/HEATMAP_P16_Cnv_Bright_3.png") ,height=1300,width=1300,res=300)
+ pheatmap::pheatmap(p16, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+```
+
+
+
+LP: No consensus cluster found
+```{r}
+lp= obs1[,which(colnames(obs1) %in% rownames(cnt@meta.data)[which(cnt$subtype=="LP")]  )]
+md <- epith@meta.data[which(colnames(epith) %in% colnames(lp)), c(1,21)] %>% as.data.frame()
+md=md[colnames(lp),]
+n <- rownames(md)
+md=as.data.frame(md[,2], row.names = n)
+colnames(md)= "subtype"
+md$subtype=as.character(md$subtype)
+subtype="#7D726A"
+names(subtype)="LP"
+wtlcol=list(colgene, subtype)
+names(wtlcol)= c("chromosome","subtype")
+##
+  png(file = paste0(hDir, "/HEATMAP_LP_Cnv_Bright_5.png") ,height=1500,width=1500,res=300)
+ pheatmap::pheatmap(lp, show_rownames = F, show_colnames = F,   annotation_col = md, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+```
+
+
+########################## ROUND 2 ####
+```{r}
+Sys.setenv(JAGS_HOME="C:\\Program Files\\JAGS\\JAGS-4.3.0")
+library("rjags")
+library(infercnv)
+cnv=readRDS(file.path(cnvDir, "run.final.infercnv_obj"))
+```
+
+isolate alteration genome for ST:
+
+```{r}
+md <- epith@meta.data#[which(colnames(epith) %in% colnames(st)), c(14,21,24,25,38)]
+md=md[,c(14,1)]
+###
+ccst <- qs::qread(paste0(cnvDir,"/CC_T_5517_Cnv.qs"))
+
+
+kp= ccst[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+pc= pc %>% column_to_rownames("cell")
+
+md=md[pc$cell,]
+identical(rownames(pc),rownames(md))
+
+#pc=pc[rownames(md),]
+md$k= pc$kp
+```
+
+```{r}
+pc=pc[rownames(md),]
+n <- rownames(pc)
+pc=as.data.frame(pc[,1], row.names = n)
+colnames(pc)="kp"
+```
+
+
+```{r}
+## genes ###
+ic_st=cnv
+ g=ic_st@gene_order[,1] %>% as.data.frame()
+   rownames(g)=rownames(ic_st@gene_order)
+  colnames(g)="chromosome"
+###
+colgene= colorRampPalette(brewer.pal(6, "Dark2"))(length(unique(g$chromosome)))
+names(colgene)=unique(g$chromosome)
+### cells ####
+mat=mat[, rownames(pc)]
+
+
+#### colors ####
+ breaks <- c(seq(0.8, 0.99, length.out = 101),seq(1,1.2, length.out = 101))
+
+pc$kp=as.character(pc$kp)
+
+k=c("#A88E68", "#ADA191", "#9C826D", "#7A563E")
+
+#k=c("#C294C2", "#B16BB3", "#F277F2", "#A65DA0") 
+#k=c("#CBC2CC", "#B16BB3", "#F277F2", "#A65DA0")
+names(k)= as.character(seq_len(4))
+
+wtlcol=list( k, colgene)
+names(wtlcol)=c("kp", "chromosome")
+```
+
+```{r}
+png(file = paste0(figDir, "/HEATMAP_ST_Bright_4.png") ,height=1300,width=1300,res=300)
+
+ pheatmap::pheatmap(mat, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, breaks= breaks,color = colorRampPalette(c("navy", "white", "firebrick3"))(202),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation",
+annotation_names_row=T) 
+dev.off()
+
+```
+
+
+```{r}
+ccst <- qs::qread(paste0(cnvDir,"/CC_T_5517_Cnv.qs"))
+kp= ccst[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+##
+k=c("#A88E68", "#ADA191", "#9C826D", "#7A563E")
+names(k)= as.character(seq_len(4))
+##
+dt1 = pc %>%
+  group_by(kp)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(kp)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+
+dt1$kp=as.factor(dt1$kp)
+
+
+pdf(paste0(figDir, "/ST_DONUT_ConsClust.pdf"), height = 10, width = 10)
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = kp))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= k)+
+  xlim(.2,2.5)
+
+print(p)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+SAME FOR LP:
+
+LP: No consensus cluster found
+```{r}
+lp= obs[,which(colnames(obs) %in% rownames(epith@meta.data)[which(epith$subtype=="LP")]  )]
+
+md <- epith@meta.data[which(colnames(epith) %in% colnames(lp)), c(1,18)] %>% as.data.frame()
+md=md[colnames(lp),]
+n <- rownames(md)
+md=as.data.frame(md[,2], row.names = n)
+colnames(md)= "subtype"
+md$subtype=as.character(md$subtype)
+
+
+ breaks <- c(seq(0.8, 0.99, length.out = 101),seq(1,1.2, length.out = 101))
+ 
+ 
+subtype="#F27ECB" 
+names(subtype)="LP"
+wtlcol=list(colgene, subtype)
+names(wtlcol)= c("chromosome","subtype")
+##
+  png(file = paste0(figDir, "/HEATMAP_LP_Cnv_Bright_6.png") ,height=1500,width=1500,res=300)
+ pheatmap::pheatmap(lp, show_rownames = F, show_colnames = F,   annotation_col = md, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+
+
+  png(file = paste0(figDir, "/HEATMAP_LP_Cnv_Bright_7.png") ,height=1300,width=1300,res=300)
+ pheatmap::pheatmap(lp, show_rownames = F, show_colnames = F,   annotation_col = md, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+```
+
+
+
+
+
+
+```{r}
+p16= obs[,which(colnames(obs) %in% rownames(epith@meta.data)[which(epith$subtype=="p16_cycling")]  )]
+
+md <- epith@meta.data[which(colnames(epith) %in% colnames(p16)), c(1,18)]
+md=md[colnames(p16),]
+#####
+ccp <- qs::qread(paste0(cnvDir,"/CC_pretumoral_Cnv.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+
+p16=p16[, pc$cell]
+md=md[pc$cell,]
+all(rownames(pc)== rownames(md))
+
+
+pc=pc[rownames(md),]
+md$k= pc$kp
+```
+
+
+```{r}
+n <- rownames(pc)
+pc=as.data.frame(pc[,1], row.names = n)
+colnames(pc)="kp"
+pc$kp=as.character(pc$kp)
+```
+
+```{r}
+# genes ###
+ g=ic_cnt@gene_order[,1] %>% as.data.frame()
+   rownames(g)=rownames(ic_cnt@gene_order)
+  colnames(g)="chromosome"
+###
+colgene= colorRampPalette(brewer.pal(6, "Dark2"))(length(unique(g$chromosome)))
+g$chromosome=as.character(g$chromosome)
+names(colgene)=unique(g$chromosome)
+####################
+
+breaks <- c(seq(0.8, 0.99, length.out = 101),seq(1,1.2, length.out = 101))
+ #breaks <- c(seq(0, 1, length.out = 101),seq(1.01,2, length.out = 101))
+
+k <- c("#818F72", "#C7DEC1", "#A0D439", "#B0F24E")
+names(k)= as.character(seq_len(4))
+wtlcol=list( colgene,  k)
+names(wtlcol)= c("chromosome","kp")
+###Plot the heatmap:
+stopifnot(colnames(p16)== rownames(pc))
+
+#stopifnot(colnames(p16)== rownames(md))
+
+  png(file = paste0(figDir, "/HEATMAP_P16_Cnv_Bright_5.png") ,height=1300,width=1300,res=300)
+ pheatmap::pheatmap(p16, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+```
+
+
+Donut plot:
+```{r}
+ccp <- qs::qread(paste0(cnvDir,"/CC_pretumoral_Cnv.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+##
+k <- c("#818F72", "#C7DEC1", "#A0D439", "#B0F24E")
+names(k)= as.character(seq_len(4))
+####################
+dt1 = pc %>%
+  group_by(kp)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(kp)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+
+dt1$kp=as.factor(dt1$kp)
+
+
+pdf(paste0(figDir, "/P16_DONUT_ConsClust.pdf"), height = 10, width = 10)
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = kp))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= k)+
+  xlim(.2,2.5)
+
+print(p)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+for ISG :
+
+
+```{r}
+p16= obs[,which(colnames(obs) %in% rownames(epith@meta.data)[which(epith$subtype=="Isg15+ GCreP_L_7412")]  )]
+
+md <- epith@meta.data[which(colnames(epith) %in% colnames(p16)), c(1,18)]
+md=md[colnames(p16),]
+#####
+ccp <- qs::qread(paste0(cnvDir,"/CC_Isg15_GCreP_L_7412_Cnv.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+
+p16=p16[, pc$cell]
+md=md[pc$cell,]
+all(rownames(pc)== rownames(md))
+
+
+pc=pc[rownames(md),]
+md$k= pc$kp
+```
+
+
+```{r}
+n <- rownames(pc)
+pc=as.data.frame(pc[,1], row.names = n)
+colnames(pc)="kp"
+pc$kp=as.character(pc$kp)
+```
+
+
+```{r}
+# genes ###
+ g=ic_cnt@gene_order[,1] %>% as.data.frame()
+   rownames(g)=rownames(ic_cnt@gene_order)
+  colnames(g)="chromosome"
+###
+colgene= colorRampPalette(brewer.pal(6, "Dark2"))(length(unique(g$chromosome)))
+g$chromosome=as.character(g$chromosome)
+names(colgene)=unique(g$chromosome)
+####################
+
+
+breaks <- c(seq(0.8, 0.99, length.out = 101),seq(1,1.2, length.out = 101))
+ #breaks <- c(seq(0, 1, length.out = 101),seq(1.01,2, length.out = 101))
+k= c("#97C2B4", "#7ED69E", "#23F5A4", "#41F0C1")
+#k <- c("#C9F2EF", "#BFD9EB", "#76BBE8", "#AAC6EB")
+names(k)= as.character(seq_len(4))
+wtlcol=list( colgene,  k)
+names(wtlcol)= c("chromosome","kp")
+###Plot the heatmap:
+stopifnot(colnames(p16)== rownames(pc))
+
+#stopifnot(colnames(p16)== rownames(md))
+
+  png(file = paste0(figDir, "/HEATMAP_ISGprelesional_Cnv_Bright_3.png") ,height=1300,width=1300,res=300)
+ pheatmap::pheatmap(p16, show_rownames = F, show_colnames = F,   annotation_col = pc, cluster_rows = F, cluster_cols = T,annotation_row = g, color = colorRampPalette(c("navy", "white", "firebrick3"))(200),annotation_colors= wtlcol,clustering_method =  "ward.D",clustering_distance_rows="correlation", annotation_names_row=T, breaks = breaks) 
+dev.off()
+```
+
+
+Donut plot:
+```{r}
+ccp <- qs::qread(paste0(cnvDir,"/CC_Isg15_GCreP_L_7412_Cnv.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+##
+k= c("#97C2B4", "#7ED69E", "#23F5A4", "#41F0C1")
+names(k)= as.character(seq_len(4))
+####################
+dt1 = pc %>%
+  group_by(kp)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(kp)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+
+dt1$kp=as.factor(dt1$kp)
+
+
+pdf(paste0(figDir, "/Isg15Les_DONUT_ConsClust.pdf"), height = 10, width = 10)
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = kp))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= k)+
+  xlim(.2,2.5)
+
+print(p)
+dev.off()
+```

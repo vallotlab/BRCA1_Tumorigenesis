@@ -1,0 +1,548 @@
+---
+title: "invivo_Mouse_Stroma_Annotation"
+author: "Melissa"
+date: "19/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+brca=qs::qread("C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53/output/mouse/scRNAseq/invivo/RData/BRCA_Merged_Annot_forCC.qs")
+outDir="C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53_NonUsedData/output/mouse/scRNAseq_invivo_Stroma/"
+```
+
+```{r}
+brca= qs::qread(file.path(RDatadir, "BRCA_SCT_1k10k.qs"))
+brca= subset(brca, orig.ident %!in% grep("^GCreN",unique(brca$orig.ident), value = TRUE))
+```
+
+
+Focus on Endothelial cells:
+```{r}
+
+endothelial= subset(brca, idents = "Endothelial")
+
+DefaultAssay(endothelial)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(endothelial[["SCT"]])= rownames(endothelial[["SCT"]]@scale.data)[-c(which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^mt-", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)), which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)),which(rownames(endothelial[["SCT"]]@scale.data) %in% grep("^Rps", rownames(endothelial[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+library(harmony)
+#%>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  
+endothelial= endothelial%>% RunPCA( npcs = 60)  %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) 
+
+endothelial= endothelial %>% FindClusters(., resolution = 0.8) 
+```
+
+
+```{r}
+Idents(endothelial)="seurat_clusters"
+DefaultAssay(endothelial)="RNA"
+endothelial=NormalizeData(endothelial)
+
+markers <- FindAllMarkers(endothelial, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+topsm = markers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+l=list(markers, topsm)
+writexl::write_xlsx(l, file.path(ccDir, "Markers_Top_Endothelial.xlsx"))
+```
+
+2,3:Fibroblasts
+6,8 :  Lymphatic endothelial cells
+
+```{r}
+endothelial$subtype= endothelial$seurat_clusters
+endothelial$subtype= dplyr::recode(endothelial$subtype, "0"="Endothelial" , "1"="Endothelial","2"="Pericytes", "3"="Lymphatic_Endo" , "4"= "Endothelial", "5"="Pericytes" , "6"= "Epith" ,"7"="Pericytes" , "8"="Endothelial", "9"="Pericytes","10"="Lymphatic_Endo", "12"="Schwann", "11"="Pericytes", "16"="Schwann" , "13"="Epith","14"="Fibroblast", "15"="Schwann", "17"="Unknown")
+
+
+qs::qsave(endothelial, file.path(ccDir,"endothelial_annotated.qs"))
+gc()
+endothelial=qs::qread("C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53_NonUsedData/output/mouse/scRNAseq_invivo_Stroma/endothelial_annotated.qs")
+```
+Focus on Immune cells:
+```{r}
+
+Idents(brca)="type"
+immune= subset(brca, idents = "Immune")
+
+DefaultAssay(immune)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(immune[["SCT"]])= rownames(immune[["SCT"]]@scale.data)[-c(which(rownames(immune[["SCT"]]@scale.data) %in% grep("^mt-", rownames(immune[["SCT"]]@scale.data), value = TRUE)), which(rownames(immune[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(immune[["SCT"]]@scale.data), value = TRUE)),which(rownames(immune[["SCT"]]@scale.data) %in% grep("^Rps", rownames(immune[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+#%>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  
+immune= immune%>% RunPCA( npcs = 60)  %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) %>% FindClusters(., resolution = 0.8) 
+```
+
+Try fast annotation with panglao:
+```{r}
+library(MAYA)
+
+count_mat= as.matrix(immune@assays$RNA@data)
+rownames(count_mat)= toupper(rownames(count_mat))
+
+activity_summary<-MAYA_predict_cell_types(expr_mat = count_mat,
+                                    min_cells_pct = 0.05,
+                                    organs = "Mammary gland",
+                                    is_logcpm = FALSE,
+                                    nCores = 1,
+                                    compute_umap = T)
+
+identical(colnames(activity_summary$activity_matrix), colnames(immune))
+
+immune$type_maya= activity_summary$cell_annotation
+
+png(paste0(outDir, "UMAP_MAYA_Annotation_ImmuneCompartment2.png"))
+p <- DimPlot(immune, group.by = "type_maya", pt.size = 1.5, label = F)
+print(p)
+dev.off()
+
+```
+
+Project on the in vivo Bach et al dataset:
+```{r}
+bach= readRDS("C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53_NonUsedData/input/mouse/publicDatasets/Bach_Tumorigenesis/BRCA1_SCE.rds")
+library(SingleCellExperiment)
+mat= counts(bach)
+md= colData(bach) %>% as.data.frame()
+colnames(mat)= md$barcode
+
+md.i= md %>% dplyr::filter(MajorGroups=="Immune")
+mat.i= mat[ ,md.i$barcode]
+#--- Create a seurat object from the immune matrix:
+im.bach= CreateSeuratObject(mat.i, project = "Bach_Immune")
+im.bach=  SCTransform(im.bach, method = "glmGamPoi",  verbose = FALSE) 
+qs::qsave(im.bach, paste0(outDir, "/Immune_SCT_Bach.qs"))
+DefaultAssay(im.bach)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(im.bach[["SCT"]])= rownames(im.bach[["SCT"]]@scale.data)[-c(which(rownames(im.bach[["SCT"]]@scale.data) %in% grep("^mt-", rownames(im.bach[["SCT"]]@scale.data), value = TRUE)), which(rownames(im.bach[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(im.bach[["SCT"]]@scale.data), value = TRUE)),which(rownames(im.bach[["SCT"]]@scale.data) %in% grep("^Rps", rownames(im.bach[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+library(harmony)
+#%>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  
+im.bach= im.bach %>% RunPCA( npcs = 60)  %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) %>% FindClusters(., resolution = 1.0)
+im.bach$subtype= mat.i$
+
+  rownames(md.i)=md.i$barcode
+im.bach= AddMetaData(im.bach, md.i)
+qs::qsave(im.bach, paste0(outDir, "/Immune_SCT_Bach.qs"))
+
+
+
+im.bach=qs::qread("C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53_NonUsedData/output/mouse/scRNAseq_invivo_Stroma/Immune_SCT_Bach.qs")
+```
+
+Projection on the Bach dataset:
+
+```{r}
+DefaultAssay(immune)="SCT"
+DefaultAssay(im.bach)="SCT"
+#######
+anchors <- FindTransferAnchors(reference = im.bach, query = immune, 
+    dims = c(1:30), reference.reduction = "pca")
+predictions <- TransferData(anchorset = anchors, refdata = im.bach$CellTypesFinal, 
+    dims = 1:30)
+
+immune <- AddMetaData(immune, metadata = predictions)
+immune2=immune
+```
+
+```{r}
+ref= im.bach
+ref <- RunUMAP(ref, dims = 1:60, reduction = "pca", return.model = TRUE)
+DefaultAssay(ref)="SCT"
+
+immune <- MapQuery(anchorset = anchors, reference = ref, query = immune, 
+    refdata = list(celltype = "CellTypesFinal"), reference.reduction = "pca", reduction.model = "umap")
+```
+
+Plot the reference UMAP and the query:
+```{r}
+md.i=ref@meta.data
+col= md.i$Colors
+ names(col)= md.i$CellTypesFinal
+ cols=unique(col)
+ 
+pdf(paste0(ccDir, "/Immune_Projection_Bach.pdf"), height = 10, width = 10)
+ p2 <- DimPlot(immune, reduction = "ref.umap", group.by = "predicted.id", label = T, repel = T, pt.size = 0.8, cols= cols) +  ggtitle("Query transferred labels_On_Immune_Ref") 
+ p2[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p2)
+  
+   p2 <- DimPlot(immune, reduction = "umap", group.by = "predicted.id", label = T, repel = T, pt.size = 0.8, cols= cols)
+ p2[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p2)
+dev.off()
+
+immune$CellTypesFinal= immune$predicted.celltype
+
+####
+qs::qsave(immune, file.path(ccDir, "Immune_AfterProjection_Bach.qs"))
+```
+
+Try to Merge both data and transfer their annotation:
+```{r}
+immune$cohort= "query"
+im.bach$cohort= "ref"
+im=merge(immune, im.bach)
+DefaultAssay(im)="SCT"
+VariableFeatures(im[["SCT"]])= rownames(im[["SCT"]]@scale.data)[-c(which(rownames(im[["SCT"]]@scale.data) %in% grep("^mt-", rownames(im[["SCT"]]@scale.data), value = TRUE)), which(rownames(im[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(im[["SCT"]]@scale.data), value = TRUE)),which(rownames(im[["SCT"]]@scale.data) %in% grep("^Rps", rownames(im[["SCT"]]@scale.data), value = TRUE)))]
+
+im= im %>% RunPCA( npcs = 40) 
+gc()
+library(harmony)
+
+im= im %>% 
+    RunHarmony("cohort", plot_convergence = F,assay.use = "SCT")   %>%  RunUMAP(., reduction= "harmony", dims= 1:40 ) %>% FindNeighbors(., reduction = "harmony", dims = 1:40) %>% FindClusters(., resolution = 1.0) 
+qs::qsave(im, file.path(RDatadir, "Immune_Integrated_Bach_Ours.qs"))
+```
+
+```{r}
+pdf(paste0(ccDir, "/Immune_Integration_Bach.pdf"), height = 10, width = 20)
+
+ p2 <- DimPlot(im, reduction = "umap", group.by = "CellTypesFinal", label = T, repel = T, pt.size = 0.8, cols= cols) +  ggtitle("Integrated_Harmony_Ref_Query") 
+ p2[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p2)
+  
+   p2 <- DimPlot(im, reduction = "umap", group.by = "CellTypesFinal", label = F, repel = T, pt.size = 0.8, cols= cols, split.by = "cohort")
+ p2[[1]]$layers[[1]]$aes_params$alpha = 0.4
+  print(p2)
+dev.off()
+
+qs::qsave(im, paste0(outDir, "/Immune_Integration_Bach_Query.qs"))
+
+```
+
+
+pDCs, expression of (‘TCF4’, ‘CLEC4C’, ‘IRF7’, ‘IRF8’, ‘LILRA4’, ‘IL3RA’,
+‘TLR9’, ‘SPIB’),
+
+cDCs (‘ANPEP’, ‘CD1C’, ‘ITGAX’, ‘CST3’, ‘FCER1A’), 
+
+monocytes(‘CD14’, ‘FCGR1A’, ‘S100A12’, ‘FCGR3A’, ‘MS4A7’, ‘LYZ’, ‘CXCR3’), 
+
+AS-DCs (‘AXL’,‘SIGLEC6’, ‘CD22’), 
+
+NK cells (‘NCAM1’, ‘FCGR3A’, ‘GNLY’, ‘XCL1’, ‘XCL2’, ‘NCR1’,‘NKG7’),
+
+T cells (‘CD3D’, ‘CD3E’, ‘CD3G’), 
+
+B cells (CD19’, ‘MS4A1’, ‘CD79A’,‘CD79B’), 
+
+plasma cells (‘IGHG2’, ‘IGHG1’, ‘IGLC2’, ‘IGHA1’, ‘IGHA2’, ‘IGHA3’,‘JCHAIN’, ‘IGHM’, ‘XBP1’, ‘MZB1’, ‘CD38’, ‘IGLL5’), 
+
+erythrocytes (‘HBB’, ‘HBA1’)
+
+and platelets (PPBP). 
+
+```{r}
+Idents(immune)="seurat_clusters"
+DefaultAssay(immune)="RNA"
+immune=NormalizeData(immune)
+
+markersi <- FindAllMarkers(immune, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+topsmi = markersi %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+immune=ScaleData(immune)
+h <- DoHeatmap(immune, features= topsmi$gene)+ scale_fill_viridis() + NoLegend() + themplot
+
+pdf(paste0(ccDir, "/Heatmap_Immune_Top20Markers_perSubtype.pdf"), height = 20, width = 12)
+print(h)
+dev.off()
+
+l=list(markersi, topsmi)
+writexl::write_xlsx(l, file.path(ccDir, "ImmuneMarkers_Top.xlsx"))
+```
+
+Markers to consider:
+VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1"), stack = TRUE, flip = TRUE)+ NoLegend()
+
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cx3cr1", "Cd4", "Il2ra", "Mzb1", "Cd68", "Fcn1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14", "Cd123", "C1qa","S100a8","Fscn1","Ccr7","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Fcn1, Cd123
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cx3cr1", "Cd4", "Il2ra", "Mzb1", "Cd68", "Fcn1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14", "Itgam", "C1qa","S100a8","Fscn1","Ccr7","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Fcn1
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cx3cr1", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14", "Cd123", "C1qa","S100a8","Fscn1","Ccr7","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Ly6c, Cd123
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cx3cr1", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14", "Cd123", "C1qa","S100a8","Fscn1","Ccr7","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Cd123
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop","Cd11b"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Cd11b
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Selenop","Btla4"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Btla4
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Cd11c"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: Cd11c
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Btla"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2kb"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H2kb
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H-2k"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H-2k
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H-2kb"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H-2kb
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-kb"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H2-kb
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-m2"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H2-m2
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-M2"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-Kb"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: H2-Kb
+> grep("^H2-", rownames(immune), value = T)
+ [1] "H2-K1"    "H2-Ke6"   "H2-Oa"    "H2-DMa"   "H2-DMb2"  "H2-DMb1"  "H2-Ob"    "H2-Ab1"  
+ [9] "H2-Aa"    "H2-Eb1"   "H2-D1"    "H2-Q1"    "H2-Q2"    "H2-Q4"    "H2-Q6"    "H2-Q7"   
+[17] "H2-Q10"   "H2-T24"   "H2-T23"   "H2-T22"   "H2-M11"   "H2-M9"    "H2-M3"    "H2-M2"   
+[25] "H2-Eb2"   "H2-T3"    "H2-M10.2" "H2-M10.1" "H2-M10.3" "H2-M10.4" "H2-M1"    "H2-M10.5"
+[33] "H2-M10.6" "H2-M5"   
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Ly6c1", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","H2-DMa"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","H2-DMa"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","S100a12"), stack = TRUE, flip = TRUE)+ NoLegend()
+Warning message:
+In FetchData(object = object, vars = features, slot = slot) :
+  The following requested variables were not found: S100a12
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","S100a8"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","C5ar1"), stack = TRUE, flip = TRUE)+ NoLegend()
+> VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","Vcan"), stack = TRUE, flip = TRUE)+ NoLegend()
+
+
+```{r}
+VlnPlot(immune, c("Ptprc", "Cd3e", "Cd79a", "Cd8a", "Cd4", "Il2ra", "Mzb1", "Cd68", "Irf7", "S100a8", "Krt19", "Epcam", "Clec9a", "Cd14","Itgam", "C1qa","S100a8","Fscn1","Ccr7","Cx3cr1","Lyve1","Mrc1","Spp1","Folr2","Trem2","Itgax","Xcr1","H2-K1","S100a12"), stack = TRUE, flip = TRUE)+ NoLegend()
+
+
+immune$subtype= immune$seurat_clusters
+immune$subtype= dplyr::recode(immune$subtype, "0"= "MacrophagesRE", "1"="MacrophagesRE","2"="MigDC", "3"="MacrophagesR", "4"="MacrophagesR" , "5"= "Spp1+MacrophagesR", "6"="MacrophagesR"  ,"7"="Cd8_T" , "8"="cDC2", "9"="Treg", "10"="cDC1", "11"="MoDC", "12"="Lyz1+MacrophagesR" ,"13"="MacrophagesRE" ,"14"="B", "15"="Plasma" ,"16"="pDC" ,"17"="Unknown")
+```
+
+```{r}
+qs::qsave(immune, paste0(ccDir,"Immune_annotated.qs"))
+immune=qs::qread(paste0(ccDir,"Immune_annotated.qs"))
+gc()
+rm(im)
+```
+
+Make a heatmap of top 10 genes per annotated cluster:
+```{r}
+Idents(immune)="subtype"
+markers.i <- FindAllMarkers(immune, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+top.i = markers.i %>% group_by(cluster) %>% top_n(20, avg_log2FC)
+
+h <- DoHeatmap(immune, features= top.i$gene)+ scale_fill_viridis() + NoLegend() + gtheme 
+pdf(paste0(outDir, "/Heatmap_Immune_Top20Markers_perSubtype.pdf"), height = 20, width = 12)
+print(h)
+dev.off()
+```
+
+#----------------Subset Fibroblasts--------------------##
+
+```{r}
+fibroblast= subset(brca, idents = "Fibroblast")
+DefaultAssay(fibroblast)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(fibroblast[["SCT"]])= rownames(fibroblast[["SCT"]]@scale.data)[-c(which(rownames(fibroblast[["SCT"]]@scale.data) %in% grep("^mt-", rownames(fibroblast[["SCT"]]@scale.data), value = TRUE)), which(rownames(fibroblast[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(fibroblast[["SCT"]]@scale.data), value = TRUE)),which(rownames(fibroblast[["SCT"]]@scale.data) %in% grep("^Rps", rownames(fibroblast[["SCT"]]@scale.data), value = TRUE)))]
+
+
+
+library(harmony)
+#%>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  
+fibroblast=fibroblast%>% RunPCA( npcs = 60)  %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) %>% FindClusters(., resolution = 0.8) 
+```
+
+```{r}
+Idents(fibroblast)="seurat_clusters"
+DefaultAssay(fibroblast)="RNA"
+fibroblast=NormalizeData(fibroblast)
+
+markers.f <- FindAllMarkers(fibroblast, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+top.f = markers.f %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+
+```{r}
+fibroblast$subtype= fibroblast$seurat_clusters
+fibroblast$subtype= dplyr::recode(fibroblast$subtype, "0"= "Fibro", "1"="Fibro","2"="Fibro", "3"= "CAFs", "4"="Fibro" , "5"= "Fibro", "6"= "CAFs","7"= "Pi16_Fibro", "8"="Fibro", "9"="Schwnn"  )
+qs::qsave(fibroblast, paste0(ccDir, "Fibroblast_Annotated.qs"))
+fibroblast= qs::qread(paste0(outDir, "Fibroblast_Annotated.qs"))
+```
+
+```{r}
+l= list("Fibroblast"=markers.f,"Immune"=markersi )
+writexl::write_xlsx(l, paste0(ccDir, "List_DEG_1vsAll_Subset_Stroma.xlsx"))
+```
+
+Make a heatmap of top 10 genes per annotated cluster:
+```{r}
+Idents(fibroblast)="subtype"
+markers.f <- FindAllMarkers(fibroblast, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+top.f = markers.f %>% group_by(cluster) %>% top_n(20, avg_log2FC)
+fibroblast=ScaleData(fibroblast)
+h <- DoHeatmap(fibroblast, features= top.f$gene)+ scale_fill_viridis() + NoLegend() + gtheme 
+
+pdf(paste0(outDir, "/Heatmap_Fibro_Top20Markers_perSubtype.pdf"), height = 15, width = 12)
+print(h)
+dev.off()
+```
+ 
+ Subset fibro cluster:
+```{r}
+subf= subset(fibroblast, idents="Fibro")
+DefaultAssay(subf)="SCT"
+#endothelial= endothelial %>% RunPCA( npcs = 60)
+
+VariableFeatures(subf[["SCT"]])= rownames(subf[["SCT"]]@scale.data)[-c(which(rownames(subf[["SCT"]]@scale.data) %in% grep("^mt-", rownames(subf[["SCT"]]@scale.data), value = TRUE)), which(rownames(subf[["SCT"]]@scale.data) %in% grep("^Rpl", rownames(subf[["SCT"]]@scale.data), value = TRUE)),which(rownames(subf[["SCT"]]@scale.data) %in% grep("^Rps", rownames(subf[["SCT"]]@scale.data), value = TRUE)))]
+
+subf= subf %>% RunPCA( npcs = 40) 
+gc()
+library(harmony)
+
+subf= subf   %>%  RunUMAP(., reduction= "pca", dims= 1:40 ) %>% FindNeighbors(., reduction = "pca", dims = 1:40) %>% FindClusters(., resolution = 1.0)
+```
+ 
+ Plot a heatmap of all the genes:
+```{r}
+DefaultAssay(subf)="RNA"
+subf=NormalizeData(subf)
+#----
+
+markers <- FindAllMarkers(subf, assay = "RNA", logfc.threshold = 0.8, only.pos = TRUE) %>% dplyr::filter(p_val_adj<0.05 )
+
+top.sf = markers %>% group_by(cluster) %>% top_n(15, avg_log2FC)
+
+
+
+Idents(subf)="seurat_clusters"
+h <- DoHeatmap(subf, features= top.sf$gene)+ scale_fill_viridis() + NoLegend() + gtheme 
+
+pdf(paste0(outDir, "/Heatmap_Subset_Fibro_perCluster.pdf"), height = 17, width = 12)
+print(h)
+dev.off()
+```
+ 
+ Salmon markers:
+```{r}
+salmarker=readRDS(paste0(outDir, "/GeneLists/2210_prot_cod_nuJunk.rds"))
+
+genes2plot_fibs = c("PTPRC","CD3D","CD74","DCN","LUM","PDGFRA","MMP2","SPON1","NFIB","TCF21","PDPN","ADH1B","PI16","CD34","LEPR","GPC3","NRG1","CXCL14","FAP","MYH11","ACTA2","GJB2","LRRC15","COL12A1","WIF1","WT1","CCL19","CCL21","ASPN","HHIP","LGR6","LGR5","TSPAN8","CLU")
+
+genes2plot_perivasc = c("MCAM","CLDN2","PECAM1","VWF","CA4","TBX3","GJA5","DKK2","ACKR1","SELE","SELP","INSR","ESM1","DES","TNNT2","COX4I2","PDGFRB","NDUFA4L2","RGS5","VWF","ADIRF","RERGL")
+
+gene_fib= genes2plot_fibs %>% tolower() %>% Hmisc::capitalize()
+gene_perivasc= genes2plot_perivasc %>% tolower() %>% Hmisc::capitalize()
+###---------------------------###
+
+g <- DoHeatmap(fibroblast, features= gene_fib)+ scale_fill_viridis() + NoLegend() + gtheme 
+Idents(subf)="seurat_clusters"
+h <- DoHeatmap(subf, features= gene_fib)+ scale_fill_viridis() + NoLegend() + gtheme 
+i= DoHeatmap(fibroblast, features= gene_perivasc)+ scale_fill_viridis() + NoLegend() + gtheme 
+j= DoHeatmap(subf, features= c("Acta2", "Myh11", "Cnn1", "Cald1", "Dsp", "Krt5", "Krt14","Krt8","Epcam"))+ scale_fill_viridis() + NoLegend() + gtheme
+
+pdf(paste0(outDir, "/Heatmap_Fibro_SalmonGenes.pdf"), height = 15, width = 12)
+print(g)
+print(h)
+print(i)
+print(j)
+dev.off()
+```
+ 
+ 
+ Several antibodies to smooth muscle-specific proteins (smooth muscle alpha-actin, smooth muscle myosin heavy chains, calponin, alpha 1-integrin, and high molecular weight caldesmon) and to epithelial-specific proteins (cytokeratins, E-cadherin, and desmoplakin) were used to show that myoepithelial cells concomitantly express epithelial and smooth muscle markers whereas adjacent luminal cells express only epithelial markers. (ACTA2; MYH11; CNN1; CALD1; DSP; KRT5;KRT14;KRT8; EPCAM)
+ 
+```{r}
+endothelial=qs::qread(paste0(ccDir, "/endothelial_annotated.qs"))
+DefaultAssay(endothelial)="RNA"
+endothelial= NormalizeData(endothelial)
+endothelial=ScaleData(endothelial)
+
+paste0(paste0(outDir, "/Endothelial_Heatmap_PerivascGenes_Salmon.pdf"))
+Idents(endothelial)="subtype"
+i= DoHeatmap(endothelial, features= gene_perivasc)+ scale_fill_viridis() + NoLegend() + gtheme + ggtitle("Endothelial_PerivascGenes_Salmon")
+j= DoHeatmap(endothelial, features= c("Acta2", "Myh11", "Cnn1", "Cald1", "Dsp", "Krt5", "Krt14","Krt8","Epcam"))+ scale_fill_viridis() + NoLegend() + gtheme + ggtitle("Endothelial")
+print(i)
+print(j)
+dev.off()
+
+```
+ 
+ 
+```{r}
+epith=qs::qread(file.path(RDatadir,"Epithelial_Only_KeepF_NoCreN_SubtypeAnnotated.qs"))
+```
+ 
+ 
+ 
+ 
+ 
+ Merge all annotations with BRCA:
+```{r}
+annot.f= data.frame(type="Fibroblast", subtype= fibroblast$subtype, cell= colnames(fibroblast))
+annot.i= data.frame(type="Immune", subtype= immune$subtype, cell= colnames(immune))
+annot.e= data.frame(type="Endothelial", subtype= endothelial$subtype, cell= colnames(endothelial))
+annot.ep= data.frame(type="Epithelial", subtype= epith$subtype, cell= colnames(epith))
+
+annot= rbind(annot.e, annot.f, annot.i, annot.ep)
+
+annot.all= data.frame(type= brca$type,cell= colnames(brca) , subtype= brca$type )
+#########
+md= merge(annot.all, annot, by= "cell", all=TRUE)
+md=md %>% mutate(subtype.y = coalesce(subtype.y,type.x))
+
+identical(md$cell, colnames(brca))
+
+rownames(md)=md$cell
+md=md[colnames(brca),]
+
+brca$final.subtype= md$subtype.y
+```
+
+```{r}
+qs::qsave(brca, paste0(RDatadir, "/Invivo_Mouse_AllCompartments_Annotated_forCCom.qs"))
+brca=qs::qread(paste0(outDir, "/Invivo_Mouse_AllCompartments_Annotated_forCCom.qs"))
+```
+
+
+
+A table with the possible cell types depicted per condition : normal-like vs Tumor:
+```{r}
+d= as.data.frame.matrix(table( brca$final.subtype,brca$orig.ident))
+#Remove Tumor samples: and keep only stroma:
+ds= d[-grep("\\+", rownames(d)),] 
+
+l= list("All_Clusters_Stroma"= d, "WO_TumorClusters"= ds)
+writexl::write_xlsx(l, paste0(outDir, "/Nbr_Cells_Stroma_Invivo_Mouse.xlsx"))
+```
+```{r}
+brca$pacome= ifelse(brca$celltype %in% grep("\\+", brca$celltype, value = TRUE), "Tumor", brca$celltype)
+brca$pacome= ifelse(brca$pacome=="Epithelial", "Tumor", brca$pacome)
+```
+

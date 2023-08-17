@@ -1,0 +1,382 @@
+---
+title: "Step3_4_ConcensusClustering"
+author: "Melissa"
+date: "04/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+mainDir <- here::here() # the MainDir should be the root of Tumor_BRCA_P53:
+source(knitr::purl(file.path(mainDir,"Scripts","global_var_current.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+```
+
+
+```{r}
+obs <- read.table(paste0(ocntcnvDir,"/infercnv.observations.txt")) %>% as.matrix()
+##
+ref <- read.table(paste0(ocntcnvDir,"/infercnv.references.txt")) %>% as.matrix()
+###
+colnames(obs) = gsub("[.]1","-1", colnames(obs))
+colnames(ref) = gsub("[.]1","-1", colnames(ref))
+
+## read the inferCNV object:
+ic_cnt= readRDS(paste0(ocntcnvDir, "/run.final.infercnv_obj"))
+cnt <- qs::qread(paste0(ocntcnvDir, "/CTRL_Seurat_InferCNV.qs"))
+
+```
+
+
+
+CONSENSUS CLUSTERING ON BASAL CELLS:
+
+```{r}
+basal=subset(epith, subtype=="Basal")
+cells=sample(colnames(basal),400, replace = FALSE )
+
+getwd()
+bsl= ref[, cells]
+ results = ConsensusClusterPlus(bsl,
+                                maxK= 12,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Basal",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(occDir, "/CC_Bsl_Cnv/CC_Bsl_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(ccDir,"/CC_Bsl_Cnv/CNT_consensus_cluster_Bsl"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(occDir, "/CC_Bsl_Cnv/ItemConsensusClustering_Result_CNT_Bsl_Cnv.qs"))
+```
+
+
+
+Consensus clustering for the control (WO P16+)
+
+
+```{r}
+mat=cbind(obs, ref)
+sub_cnt = subset(cnt, idents=c("Luminal H-S", "Avd", "LP", "Basal")) #18350  1939
+mat=mat[,colnames(sub_cnt)]
+
+```
+
+```{r}
+library(ConsensusClusterPlus)
+###Run it on the Control Data:
+ results = ConsensusClusterPlus(mat,
+                                maxK= 12,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Cnv_Cntrl_WO_P16",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ 
+ qs::qsave(results, paste0(occDir, "/ConsensusClustering_Result_CNTRL_CNV_WO_p16.qs"))
+ 
+ res= calcICL(results,title="CNT_consensus_cluster_WO_P16",plot="pdf",writeTable=FALSE)
+  qs::qsave(res, paste0( occDir,"/CC_Cntr_Cnv/ItemConsensusClustering_Result_CNT_WO_P16_CNV.qs"))
+```
+
+
+Run consensus clustering on the P16 only:
+
+```{r}
+mat=cbind(obs, ref)
+sub_cnt = subset(cnt, idents="P16+ Pre-lesional") #18350  
+mat=mat[,colnames(sub_cnt)]
+###Run it on the Control Data:
+ results = ConsensusClusterPlus(mat,
+                                maxK= 12,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Cnv_P16",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ 
+ qs::qsave(results, paste0(occDir, "/ConsensusClustering_Result_CNV_p16.qs"))
+ 
+ res= calcICL(results,title="CNT_consensus_cluster_P16",plot="pdf",writeTable=FALSE)
+  qs::qsave(res, paste0(occDir, "/ItemConsensusClustering_Result_CNT_P16_CNV.qs"))
+```
+
+
+
+Donut plot:
+```{r}
+ccp <- qs::qread(paste0(occDir,"/CC_Cntr_Cnv_P16/ConsensusClustering_Result_CNV_p16.qs"))
+kp= ccp[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+##
+k <- c("#B2E37D", "#C7DEC1", "#A0D439", "#B0F24E")
+names(k)= as.character(seq_len(4))
+####################
+dt1 = pc %>%
+  group_by(kp)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(kp)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+
+dt1$kp=as.factor(dt1$kp)
+
+
+pdf(paste0(figDir, "/P16_DONUT_ConsClust.pdf"), height = 10, width = 10)
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = kp))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= k)+
+  xlim(.2,2.5)
+
+print(p)
+dev.off()
+
+```
+
+```{r}
+ccst <- qs::qread(paste0(occDir,"/CC_ST_Cnv/ConsensusClustering_Result_ST_CNV.qs"))
+kp= ccst[[4]]$consensusClass
+pc <- as.data.frame(kp)
+pc$cell=rownames(pc)
+##
+k=c("#C294C2", "#B16BB3", "#F277F2", "#A65DA0")
+names(k)= as.character(seq_len(4))
+##
+dt1 = pc %>%
+  group_by(kp)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(kp)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+
+dt1$kp=as.factor(dt1$kp)
+
+
+pdf(paste0(figDir, "/ST_DONUT_ConsClust.pdf"), height = 10, width = 10)
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = kp))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= k)+
+  xlim(.2,2.5)
+
+print(p)
+dev.off()
+```
+
+
+##Round 2: Split inferCNV object 
+```{r}
+obs3=read.table(file.path(cnvDir,"/infercnv.observations.txt")) %>% as.matrix()
+colnames(obs3) = gsub("[.]1","-1", colnames(obs3))
+
+lowthr <- quantile(obs3,0.1) #0.9120466 
+highthr <- quantile(obs3,0.9)# 1.090948
+
+```
+
+```{r}
+ref3=read.table(file.path(cnvDir,"/infercnv.references.txt")) %>% as.matrix()
+colnames(ref3) = gsub("[.]1","-1", colnames(ref3))
+```
+
+```{r}
+basal=subset(epith, subtype=="Basal")
+cells=sample(colnames(basal),400, replace = FALSE )
+
+bsl= ref3[, which(colnames(ref3) %in% cells)]
+ 
+results = ConsensusClusterPlus(bsl,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_LP",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(RDatadir, "/CC_Bsl_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_Bsl"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_Bsl_Cnv.qs"))
+  
+```
+
+Take the pre-lesional only:
+
+Run consensus clustering on the P16 only:
+
+```{r}
+setwd(cnvDir)
+pretumoral=subset(epith, subtype=="p16_cycling")
+pretumoral= subset(pretumoral, orig.ident %!in% c("T_5322_mm_6M", "T_5517_mm_6.9M","T_6413_mm_6.9M" ))
+
+pretum= obs3[, which(colnames(obs3) %in% colnames(pretumoral))]
+ 
+results = ConsensusClusterPlus(pretum,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Pretumoral",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(cnvDir, "/CC_pretumoral_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_pretumoral"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_pretumoral_Cnv.qs"))
+```
+
+Run consensus clustering on the P16 only:
+
+```{r}
+setwd(cnvDir)
+lp=subset(epith, subtype=="LP")
+lp= subset(lp, orig.ident %!in% c("T_5322_mm_6M", "T_5517_mm_6.9M","T_6413_mm_6.9M" ))
+
+lp= obs3[, which(colnames(obs3) %in% colnames(lp))]
+ 
+results = ConsensusClusterPlus(lp,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_LP",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(cnvDir, "/CC_LP_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_LP"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_LP_Cnv.qs"))
+
+#ON AVD:
+
+setwd(cnvDir)
+avd=subset(epith, subtype=="Avd")
+avd= subset(avd, orig.ident %!in% c("T_5322_mm_6M", "T_5517_mm_6.9M","T_6413_mm_6.9M" ))
+
+avd= obs3[, which(colnames(obs3) %in% colnames(avd))]
+ 
+results = ConsensusClusterPlus(avd,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Avd",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(cnvDir, "/CC_Avd_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_Avd"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_Avd_Cnv.qs"))
+```
+
+
+ON a small tumor
+```{r}
+setwd(cnvDir)
+st=subset(epith, orig.ident=="T_5517_mm_6.9M")
+
+
+st= obs3[, which(colnames(obs3) %in% colnames(st))]
+ st=as.matrix(st)
+results = ConsensusClusterPlus(st,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_T_5517",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(cnvDir, "/CC_T_5517_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_T_5517"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_T_5517_Cnv.qs"))
+```
+
+
+
+
+ON a small tumor
+```{r}
+obs3=obs
+
+setwd(cnvDir)
+st=subset(epith, subtype=="Isg15+ GCreP_L_7412")
+
+
+st= obs3[, which(colnames(obs3) %in% colnames(st))]
+ st=as.matrix(st)
+results = ConsensusClusterPlus(st,
+                                maxK= 10,
+                                reps=200,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Isg15_GCreP_L_7412",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="pdf")
+ 
+ qs::qsave(results, paste0(cnvDir, "/CC_Isg15_GCreP_L_7412_Cnv.qs") )
+ ###
+  res= calcICL(results,title=paste0(cnvDir,"/CNT_consensus_cluster_Isg15_GCreP_L_7412"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(cnvDir, "/ItemConsensusClustering_Result_CNT_Isg15_GCreP_L_7412_Cnv.qs"))
+```
