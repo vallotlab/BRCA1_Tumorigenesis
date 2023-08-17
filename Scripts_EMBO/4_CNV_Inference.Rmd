@@ -1,0 +1,228 @@
+---
+title: "4_CNV_Inference"
+author: "Melissa"
+date: "18/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+mainDir= here::here() #Should be the root folder Tumor_BRCA_p53
+
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq","mouse","GSE161529","PC_informativity_Functions.Rmd"), quiet=TRUE))
+ #"C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+inputDir= file.path(mainDir,"input" ,"human","scRNAseq","publicDatasets","input_GSE161529")
+outputDir= file.path(mainDir, "output","human","public_data","EMBO")
+###
+plotDir= file.path(outputDir,"Plots") ; if(!file.exists(plotDir)){dir.create(plotDir)}
+RdataDir= file.path(outputDir,"Rdata") ; if(!file.exists(RdataDir)){dir.create(RdataDir)}
+cnvDir=  file.path(outputDir,"inferCNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+```{r}
+equil= qs::qread(paste0(RdataDir, "/LP_fromEquilibrated_Seurat.qs"))
+e1 <- qs::qread(paste0(RdataDir, "/Epithelial_EMBO_Processed_Annotated.qs"))
+```
+
+Run INFER CNV:
+```{r}
+library(ChromSCape)
+data("hg38.GeneTSS")
+gene_annot = hg38.GeneTSS[,c(4,1,2,3)]
+colnames(gene_annot) = NULL
+rownames(gene_annot)= gene_annot[,1]
+gene_annot=gene_annot[,c(2:4)]
+```
+
+```{r}
+ Sys.setenv(JAGS_HOME="C:\\Program Files\\JAGS\\JAGS-4.3.0")
+
+Wrapper_inferCNV= function( SeurObj,  ref_group,outputPath, analysis_mode,HMM_type){
+  
+  message("Creation of the annotation object")
+ #stopifnot( str(col) %in% colnames(SeurObj@meta.data))
+  annotation <- as.data.frame(SeurObj$col) %>% rownames_to_column() 
+  rownames(annotation)= make.unique(annotation[,1])
+ n <-rownames(annotation)
+ annotation=as.data.frame(annotation[,-1], row.names = n); rm(n)
+ names(annotation)=NULL
+ counts_matrix <- as.matrix(SeurObj@assays$RNA@counts[,colnames(SeurObj)]) 
+ 
+ message("Creation of the inferCNV object")
+ 
+ cnv_Obj <-CreateInfercnvObject(counts_matrix, gene_order_file=gene_annot, annotations_file=annotation,
+  max_cells_per_group = NULL,
+  min_max_counts_per_cell = NULL,ref_group_names= ref_group)
+ 
+ message("Running inferCNV is starting" )
+ 
+ infercnv <- infercnv::run(
+    cnv_Obj,
+    min_cells_per_gene = 50,
+    cutoff=0.1, # cutoff=1 works well for Smart-seq2, and cutoff=0.1 works well for 10x Genomics
+    out_dir=outputPath,
+    cluster_references = FALSE,
+    cluster_by_groups=TRUE, 
+    denoise=TRUE,
+    HMM= FALSE,
+    analysis_mode = analysis_mode,
+    tumor_subcluster_partition_method='random_trees',
+    no_prelim_plot=FALSE,
+    png_res=500,
+   plot_steps=FALSE,num_threads=5, HMM_type= HMM_type, save_rds= FALSE, save_final_rds = TRUE)
+ 
+  
+ SeurObj=add_to_seurat(
+  seurat_obj = SeurObj,
+  infercnv_output_path = outputPath,
+  top_n = 50,
+  bp_tolerance = 2e+06)
+ 
+ return(SeurObj)
+}
+```
+
+
+Redo CNV inference and run phylogenetic trees:
+
+equil + other from the TNB data:
+```{r}
+Idents(e1)= "subtype"
+s <- subset(e1, idents = c("TNB_ML", "TNB"))
+cells= c( colnames(s)[which(s$subtype== "TNB_ML" & s$Condition== "Triple negative (BRCA1) tumor")],
+        sample(colnames(s)[which(s$subtype== "TNB" & s$Condition== "Triple negative (BRCA1) tumor")], 2000))
+s= subset(s, cells=cells)
+seu= merge(s, equil)
+seu$col=Idents(seu)
+table(seu$col, seu$subtype)
+```
+
+```{r}
+Idents(seu)="col"
+
+
+cnv=Wrapper_inferCNV(seu,ref_group="Normal",outputPath=cnvDir, analysis_mode="samples",HMM_type="i3") 
+qs::qsave(seu, paste0(cnvDir, "/Seurat_Obj_LP_TNB_inferCNV.qs"))
+```
+
+Load the inferCNV object:
+```{r}
+cnvobs <- read.table(paste0(cnvDir, "/infercnv.observations.txt"))%>% as.matrix()
+cnvr <- read.table(paste0(cnvDir, "/infercnv.references.txt"))%>% as.matrix()
+ ###
+colnames(cnvobs) = gsub("[.]1","-1", colnames(cnvobs))
+colnames(cnvr) = gsub("[.]1","-1", colnames(cnvr))
+##
+md=seu@meta.data[colnames(cnvobs),]
+mdr=seu@meta.data[colnames(cnvr),]
+```
+
+```{r}
+lowthr <- quantile(cnvobs, 0.01)
+highthr <- quantile(cnvobs, 0.99)
+```
+
+```{r}
+binr <- cnvr %>%as.data.frame() %>%  mutate(across(everything(), ~  ifelse(. <=  lowthr, -1, ifelse(. >=  highthr, 1, 0)))) %>% abs()
+##
+
+xr= binr %>% reshape2::melt() %>% dplyr::filter(value==1)
+xr=as.data.frame.matrix(table(xr$variable, xr$value))
+colnames(xr)= "Nbr_Alterations"
+#########
+xr= apply(xr,2, function(u){round(u/nrow(binr), 3) * 100} ) %>% as.data.frame()
+xr$cell <- rownames(xr)
+##
+rownames(xr) = gsub("[.]1","-1", rownames(xr))
+xr$cell=gsub("[.]1","-1", xr$cell)
+#######################
+xr=xr[rownames(mdr),]
+
+stopifnot(identical(rownames(xr), rownames(mdr)))
+##
+xr$sample= mdr$orig.ident
+xr$Condition=mdr$Condition
+xr$subtype=mdr$subtype
+xr$type= mdr$col
+
+qs::qsave(xr, paste0(cnvDir, "/NbrAlterations_refNormal_LP_References.qs"))
+xr = qs::qread( paste0(cnvDir, "/NbrAlterations_refNormal_LP_References.qs"))
+```
+
+
+Look at all alterations:
+```{r}
+bin <- cnvobs %>%as.data.frame() %>%  mutate(across(everything(), ~  ifelse(. <=  lowthr, -1, ifelse(. >=  highthr, 1, 0)))) %>% abs()
+##
+
+x= bin %>% reshape2::melt() %>% dplyr::filter(value==1)
+x=as.data.frame.matrix(table(x$variable, x$value))
+colnames(x)= "Nbr_Alterations"
+#########
+
+x= apply(x,2, function(u){round(u/nrow(bin), 3) * 100} ) %>% as.data.frame()
+x$cell <- rownames(x)
+
+identical(x$cell, rownames(md))
+
+x$sample= md$orig.ident
+x$Condition=md$Condition
+x$subtype=md$subtype
+x$type= md$col
+qs::qsave(x, paste0(cnvDir, "/NbrAlterations_refNormal_LP_Observations.qs"))
+x = qs::qread(paste0(cnvDir, "/NbrAlterations_refNormal_LP_Observations.qs"))
+```
+
+```{r}
+identical(colnames(xr), colnames(x))
+dat= rbind(x,xr) 
+###############################################################
+
+pdf(paste0(cnvDir, "/Vlnplot_AlteredGenome_LP.pdf" ), height = 8, width = 8)
+   dat %>% ggplot(aes(x= type, y=Nbr_Alterations, fill=type))   + geom_boxplot(width = 0.05) + theme_bw()+ geom_jitter(aes(color=type), size=2, alpha=0.4) + scale_color_manual(values=rev(met.brewer(name="Egypt",n=length(unique(dat$type)),type="discrete"))[c(2,1,3,4)]) + theme(legend.position = "none")  + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Normal",aes(label=..p.adj..), alternative="greater") + scale_fill_manual(values=rev(met.brewer(name="Egypt",n=length(unique(dat$type)),type="discrete"))[c(2,1,3,4)]) 
+  dev.off()
+   #geom_violin() 
+ ################
+  
+   dat %>% ggplot(aes(x= sample,y=Nbr_Alterations, fill= sample))  +geom_boxplot(width = 0.05) + theme_bw()+ geom_jitter(color="black", size=1, alpha=0.4) + theme(legend.position = "none") + ylab("% Altered genome") + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + scale_fill_manual(values=rev(met.brewer(name="Thomas",n=length(unique(dat$sample)),type="continuous"))) + coord_flip()
+ dev.off()
+ 
+ 
+   dat %>% ggplot(aes(x= type, y=Nbr_Alterations, fill=type)) + geom_violin()   + theme_bw() + theme(legend.position = "none") + ylab("% Altered genome") + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Normal",aes(label=..p.adj..)) + scale_fill_manual(values=rev(met.brewer(name="Egypt",n=length(unique(dat$type)),type="discrete"))[2,1,3,4])
+```
+
+Add the alterations to the seurat object: only to the equilibrated 
+```{r}
+dat= dat[colnames(equil),]
+stopifnot(identical(dat$cell, colnames(equil)))
+equil$percent_alterations= dat$Nbr_Alterations
+
+pdf(paste0(cnvDir, "/UMAP_AlteredGenome.pdf" ), height = 5, width = 5)
+p<- FeaturePlot(equil, "percent_alterations", pt.size = 1)+scale_color_viridis(option="B",limits = c(0.3, 10), na.value= "grey",direction=-1) 
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+print(p)
+dev.off()
+#####
+
+pdf(paste0(cnvDir, "/Vln_AlteredGenome.pdf" ), height = 5, width = 5)
+p <- VlnPlot(equil, "percent_alterations", pt.size = 0.5, rev(met.brewer(name="Egypt",n=4,type="discrete"))[c(2,1)])+scale_color_viridis(option="B",limits = c(0.3, 10), na.value= "grey",direction=-1) + NoLegend()
+
+p[[1]]$layers[[1]]$aes_params$alpha = 0.4
+print(p)
+dev.off()
+```
+

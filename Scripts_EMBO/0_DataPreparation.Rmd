@@ -1,0 +1,176 @@
+---
+title: "DataPreparation"
+author: "Melissa"
+date: "17/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+source(knitr::purl(file.path(mainDir,"Scripts","scRNAseq_Functions.Rmd"), quiet=TRUE))
+source(knitr::purl(file.path(mainDir,"Scripts","global_variables.Rmd"), quiet=TRUE))
+
+mainDir= here::here() #Should be the root folder Tumor_BRCA_p53
+ #"C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
+inputDir= file.path(mainDir,"input" ,"human","scRNAseq","publicDatasets","input_GSE161529")
+outputDir= file.path(mainDir, "output","human","public_data","EMBO")
+###
+plotDir= file.path(outputDir,"Plots") ; if(!file.exists(plotDir)){dir.create(plotDir)}
+RdataDir= file.path(outputDir,"Rdata") ; if(!file.exists(RdataDir)){dir.create(RdataDir)}
+```
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(msigdbr)
+library(clusterProfiler)
+```
+
+
+##---------------- THESE ARE PRE PROCESSING STEPS WHICH ARE NOT MENDATORY TO RUN A SECOND TIME, A QS FILE HAS ALREADY BEEN GENERATED CONTAINING THE RAW DATA AND SORED IN THE INPUT DATA ------------------------######
+```{r}
+ld <- list.files(paste0(inputDir,"/"))
+library(Seurat)
+
+mxt_temp= paste0(file_temp,list.files(file_temp,pattern="*-matrix.mtx.gz"))
+#mxt_temp=list.files(file_temp,pattern="*-matrix.mtx.gz")
+#cells_temp= paste0(file_temp,'/',list.files(file_temp ,pattern="*-barcodes.tsv.gz"))
+cells_temp=paste0(file_temp,list.files(file_temp ,pattern="*-barcodes.tsv.gz"))
+features_temp = paste0(file_temp,list.files(file_temp ,pattern="*_features.tsv.gz"))
+####
+
+metadata <- readxl::read_excel(paste0(inputDir, "/EMBJ-40-e107333-s003.xlsx"), skip = 1)
+metadata=metadata[-c(70,71),]
+```
+
+```{r}
+metadata$`Sample Name`=gsub("-","_", metadata$`Sample Name`)
+stopifnot(length(unique(metadata$`Number of Cells`))== nrow(metadata))
+
+for(i in seq(1,nrow(metadata))){
+  d= ReadMtx(mtx = mxt_temp[i],cells = cells_temp[i],features =  features_temp)
+  if(ncol(d)== metadata$`Number of Cells`[i]) {
+    assign(metadata$`Sample Name`[i],d)
+  }
+  rm(d)
+  #assign(sampleID[i],  ReadMtx(mtx = mxt_temp[i],cells = cells_temp[i],features =  features_temp))
+}
+rm(i)
+rm(ld)
+rm(file_temp)
+rm(mxt_temp)
+rm(features_temp)
+rm(cells_temp)
+##
+sampleID=ls()
+which(sampleID=="metadata")
+sampleID=sampleID[-which(sampleID=="metadata")]
+sampleID=metadata$`Sample Name`[1:36] 
+###
+library(Seurat)
+for(i in seq(1,length(sampleID))){
+  assign(sampleID[i], CreateSeuratObject(get(sampleID[i]), project = sampleID[i]))
+}
+
+mlist= mget(sampleID)
+mlist=mlist[-c(29:32)]
+qs::qsave(mlist, paste0(RdataDir,"/FirstSet_List.qs"))
+```
+
+##############---------------------------------------------------------################################
+
+
+
+##START FROM HERE #########
+```{r}
+slist= qs::qread(paste0(RdataDir,"/FirstSet_List.qs"))
+slist2= qs::qread(paste0(RdataDir,"/Only_NB_TN_TNB.qs"))
+sl <- c(slist, slist2)
+sl=sl[!duplicated(sl)]
+
+######################
+md <- readxl::read_excel(paste0(inputDir,"/EMBJ-40-e107333-s003.xlsx"), skip = 1) %>% as.data.frame()
+
+md=md[-c(70,71),]
+rownames(md)=md$`Sample Name`
+md=as.data.frame(md)
+md$sample=md$`Sample Name`
+md$sample=gsub("-","_", md$sample)
+###
+md=md[which(md$sample %in% names(sl)),]
+sl=sl[md$sample]
+all(md$sample== names(sl))
+```
+
+```{r}
+name <- c(md[ which(md$Condition=="Normal" & md$Parity=="Nulliparous" & md$Gender=="Female" & md$Menopause=="Pre" & md$Source=="Epithelial"),12 ],
+md[ which(md$Condition=="Normal BRCA1+/- pre-neoplastic" & md$Parity=="Nulliparous" & md$Gender=="Female"),12 ],
+ md[ which(md$Condition=="Triple negative (BRCA1) tumor" & md$Gender=="Female"),12 ],
+ md[ which(md$Condition=="Triple negative tumor" & md$Gender=="Female"),12 ])
+###
+id <- c(which(md$Condition=="Normal" & md$Parity=="Nulliparous" & md$Gender=="Female" & md$Menopause=="Pre" & md$Source=="Epithelial"),
+ which(md$Condition=="Normal BRCA1+/- pre-neoplastic" & md$Parity=="Nulliparous" & md$Gender=="Female"),
+  which(md$Condition=="Triple negative (BRCA1) tumor" & md$Gender=="Female"),
+  which(md$Condition=="Triple negative tumor" & md$Gender=="Female"))
+
+seu <- merge(x=sl[[3]], y=sl[id[-1]], add.cell.ids= name)
+rm(sl); rm(slist); rm(slist2)
+gc()
+```
+
+
+```{r}
+m1=as.data.frame(seu$orig.ident)
+colnames(m1)= "sample"
+m1$cell=rownames(m1)
+m1=merge(m1, md, by="sample")
+rownames(m1)=m1$cell
+m1=m1[colnames(seu),]
+stopifnot(all(rownames(m1)== colnames(seu)))
+######
+seu=AddMetaData(seu, metadata = m1)
+seu[["percent.mito"]] <- PercentageFeatureSet(seu, pattern = "^MT") #33538 107220
+seu = seu  %>% subset(nCount_RNA < 50000  & nFeature_RNA > 800 & nFeature_RNA < 6000 & percent.mito < 30 ) 
+gc()
+rm(m1)
+
+memory.size(max=TRUE)
+
+seu = seu %>%  SCTransform(method = "glmGamPoi",  verbose = FALSE, ncells = 2500) 
+gc()
+
+seu= seu %>% RunPCA( npcs = 60) %>% RunUMAP(reduction= "pca", dims= 1:60 ) %>% FindNeighbors(., reduction = "pca", dims = 1:60) %>% FindClusters(., resolution = 1.2)
+qs::qsave(seu, paste0(RdataDir, "/Raw_SCT.qs"))
+rm(seu)
+gc()
+```
+
+
+#######--------- Process only epithgelial cells -------------------###
+```{r}
+seu= qs::qread(paste0(RdataDir, "/Raw_SCT.qs"))
+v1= c(0:2,4:8,11:14,16,18,20:23, 25,26,28:30,39:42,45)
+names(v1)=rep("Epithelial", length(v1))
+```
+
+
+Keep only epithelial:
+```{r}
+DefaultAssay(seu)="RNA"
+seu=NormalizeData(seu)
+##Subset Epithelial:
+DefaultAssay(seu)="SCT"
+e1 = subset(seu,idents=c(0:2,4:8,11:14,16,18,20:23, 25,26,28:30,39:42,45)) %>% RunPCA(., npcs = 60)  %>% RunUMAP(., reduction= "pca", dims= 1:60 ) %>% FindNeighbors(., reduction = "pca", dims = 1:60) %>% FindClusters(., resolution = 1.2)
+##
+qs::qsave(seu, paste0(RdataDir, "/Raw_SCT_Processed.qs"))
+seu= qs::qread(paste0(RdataDir, "/Raw_SCT_Processed.qs"))
+##
+DefaultAssay(e1)="RNA"
+e1=NormalizeData(e1)
+qs::qsave(e1, paste0(RdataDir, "/Epithelial_EMBO_Processed_Annotated.qs"))
+```
+
+
