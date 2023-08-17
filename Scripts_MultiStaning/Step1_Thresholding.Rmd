@@ -15,13 +15,13 @@ knitr::opts_chunk$set(echo = TRUE)
 #the main Dir should be the root directory in which both input, output and script folders are stored
 mainDir= here::here()
 #
-#mainDir= "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
-inputDir=  file.path(mainDir,"input", "multistaining", "V_juxta") 
-outputDir= file.path(mainDir, "output", "multiStaining")
+mainDir= "C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/REVIEW"
+inputDir=  file.path(mainDir,"input", "mouse",    "multistaining") 
+outputDir= file.path(mainDir, "output", "mouse","multiStaining")
 #####################
-RDatadir <- file.path(outputDir,"RData2") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
-QCdir <- file.path(outputDir, "QC2") ; if(!file.exists(QCdir)){dir.create(QCdir)}
-PLOTdir <- file.path(outputDir, "Plots2") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+PLOTdir <- file.path(outputDir, "Plots") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
 ```
 
 ```{r}
@@ -74,10 +74,513 @@ samplename2=qdapRegex::ex_between(lf, "DetectionMeasures_", "_Background")%>% un
 
 ```
 
-```{r}
-markers_to_analyze <- c(colnames(Juxta %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
 
-dl= mget(c("Juxta","Juxta_G7058","T99_Juxta" ,samplename2))
+
+```{r}
+files=list.files(inputDir)
+samplename=gsub("_Background.txt","", files)
+
+for(i in seq_len(length(files))){
+   assign(samplename[i], read.table(paste0(inputDir, "/", files[i]), header = TRUE, sep="\t"))
+}
+
+
+markers_to_analyze <- c(colnames(Juxta_G7058_1_Zone2 %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+
+
+
+CreN_7739= rbind(CreN_7739_Zone2, CreN_7739_Zone4)
+CreN_7761= rbind(CreN_7761_Zone1, CreN_7761_Zone2, CreN_7761_Zone4, CreN_7761_Zone5)
+Juxta_7412=rbind(Juxta_7412_zone1, Juxta_7412_Zone2)
+Juxta_AI9434_06_1=rbind(Juxta_AI9434_06_1_Zone1, Juxta_AI9434_06_1_Zone2)
+Juxta_G7058=rbind(Juxta_G7058_1_Zone2,Juxta_G7059_Zone1 )
+Juxta_T99_AI9434_01_1=rbind(Juxta_T99_AI9434_01_1_Zone1, Juxta_T99_AI9434_01_1_Zone2)
+mmT_7412=rbind(mmT_7412_Zone1, mmT_7412_Zone3, mmT_7412_Zone4)
+Tumor_7879=rbind(Tumor_7879_Zone1, Tumor_7879_Zone2, Tumor_7879_Zone3, Tumor_7879_Zone4)
+
+
+dl= mget(c("CreN_5M_7060", "CreN_7739","CreN_7761","Juxta_7412","Juxta_AI9434_06_1","Juxta_G7058","Juxta_T99_AI9434_01_1","mmT_5617_mlesion","mmT_7058", "mmT_7412","Tumor_5617","Tumor_7879","Tumor_T7071" ))
+```
+
+
+Ch1=Hemato
+Ch2=Cdkn2a
+Ch3=Ecad
+Ch4=H3K27me3
+Ch5=Ki67
+Ch6=Krt5
+Ch7=Krt8
+Ch8=Ncad
+Ch9=Vim
+
+
+rename the markers:
+```{r}
+for(i in seq_len(length(dl))){
+  markers_to_analyze=  c(colnames(dl[[i]] %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+  
+  
+  
+  if(length(markers_to_analyze)== 10){
+    markers_to_analyze=markers_to_analyze[-4]
+    dl[[i]]= dl[[i]] %>% dplyr::select(markers_to_analyze)
+    colnames(dl[[i]])= c("Hemato", "Cdkn2a", "Ecad", "Ki67", "Krt5", "Krt8", "Ncad", "Vim", "Parent")
+    
+  }
+  else{
+    markers_to_analyze=c(colnames(dl[[i]] %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+    dl[[i]]= dl[[i]] %>% dplyr::select(markers_to_analyze)
+    
+    if( names(dl[i])== "CreN_7739"){
+      colnames(dl[[i]])= c("Hemato", "Cdkn2a", "Ecad", "Ki67",  "Krt8","Krt5", "Ncad", "Vim", "Parent")
+      
+    }
+    else{
+      colnames(dl[[i]])= c("Hemato", "Cdkn2a", "Ecad", "Ki67", "Krt5", "Krt8", "Ncad", "Vim", "Parent")
+      
+    }
+    
+    
+  }
+  
+}
+
+
+pdf(paste0(QCdir, "/QC_meanOnly.pdf"))
+   for(i in seq_len(9)){
+
+  p <- dl[[i]] %>% melt() %>% ggplot(aes(x= value)) + 
+  geom_histogram( position = 'identity', bins= 25)  + facet_wrap(. ~ variable, ncol=2) + themplot + ggtitle(names(dl[i]))
+  print(p)
+}
+dev.off()
+
+for(i in seq_len(length(dl))){
+  dl[[i]]$sample= names(dl[i])
+}
+
+qs::qsave(dl, file.path(RDatadir, "List_Files_AfterAllRearangments.qs"))
+dl=qs::qread(file.path(RDatadir, "List_Files_AfterAllRearangments.qs"))
+```
+
+
+#start thresholding:
+
+```{r}
+tmp= do.call( rbind, dl)
+tmp= tmp %>% dplyr::filter(!Parent=="Stroma")
+tmp$Parent=ifelse(tmp$Parent=="PathAnnotationObject", tmp$sample, tmp$Parent)
+tmp$Parent=ifelse(tmp$Parent=="Duct", tmp$sample, tmp$Parent)
+
+tmp$Parent= dplyr::recode(tmp$Parent, "CreN_5M_7060" ="CreN","CreN_7739"= "CreN","CreN_7761"="CreN","Juxta_7412"="Juxta","Juxta_AI9434_06_1"="Juxta" , "Juxta_G7058"="Juxta",           "Juxta_T99_AI9434_01_1"= "Juxta" , "mmT_5617_mlesion" = "mmT", "mlesion"  ="mmT", "mmT_7412"= "mmT", "mmT_7058"="mmT",           
+ "Tumor_5617" = "Tumor", "Tumor_7879"= "Tumor" , "Tumor_T7071"= "Tumor"       )
+
+writexl::write_xlsx(tmp, file.path(RDatadir, "Raw_Numbers_Parent_Sample.xlsx"))
+
+
+mdata= as.data.frame.matrix(table(tmp$sample, tmp$Parent))
+mdata$sample=rownames(mdata)
+writexl::write_xlsx(mdata, file.path(RDatadir, "Raw_Numbers_Sample_Histology.xlsx"))
+```
+
+
+p16:
+```{r}
+#p16s= p16s %>% filter(sample== "C_Cre3M" )
+p16s = tmp %>% filter(!Parent== "Tumor") %>% dplyr::select(c("Cdkn2a", "Parent", "sample"))
+densCurve <- density(p16s$Cdkn2a, adjust=1, cut=0)
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_p16 <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(p16s$Cdkn2a), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_p16$threshold=as.numeric(threshold_p16$threshold)
+thr_p16= median(as.numeric(threshold_p16$threshold)) #11, mean:21
+mean(c(30,19,13,11,11,10,6,5,5,4,3,2))
+thr_p16= mean(c(30,19,13,11,11,10,6,5,5,4,3,2))
+```
+
+vim:
+```{r}
+vim = tmp %>% filter(!Parent== "Tumor")%>% dplyr::select(c("Vim", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_vim <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(vim$Vim), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_vim$threshold=as.numeric(threshold_vim$threshold)
+
+thr_vim= median(as.numeric(threshold_vim$threshold)) #68
+
+```
+
+Ecad:
+```{r}
+ecad = tmp %>% filter(!Parent== "Tumor")%>% dplyr::select(c("Ecad", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_ecad <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(ecad$Ecad), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_ecad$threshold=as.numeric(threshold_ecad$threshold)
+
+thr_ecad= median(as.numeric(threshold_ecad$threshold)) #49
+
+```
+
+
+Ncad:
+```{r}
+ncad = tmp %>% filter(Parent== "Tumor")%>% dplyr::select(c("Ncad", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_ncad <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(ncad$Ncad), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_ncad$threshold=as.numeric(threshold_ncad$threshold)
+
+thr_ncad= median(as.numeric(threshold_ncad$threshold)) #23
+
+```
+
+
+Ki67
+```{r}
+ki67 = tmp %>% filter(!Parent== "Tumor")%>% dplyr::select(c("Ki67", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_ki67 <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(ki67$Ki67), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_ki67$threshold=as.numeric(threshold_ki67$threshold)
+
+thr_ki67= median(as.numeric(threshold_ki67$threshold)) #69
+
+```
+
+
+Krt5
+```{r}
+krt5 = tmp %>% filter(!Parent== "Tumor")%>% dplyr::select(c("Krt5", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_krt5 <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(krt5$Krt5), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_krt5$threshold=as.numeric(threshold_krt5$threshold)
+
+thr_krt5= mean(as.numeric(threshold_krt5$threshold)) 
+
+```
+
+
+Krt8
+```{r}
+krt8 = tmp %>% filter(!Parent== "Tumor") %>% dplyr::select(c("Krt8", "Parent", "sample"))
+
+
+library(autothresholdr)
+thresh_methods <- c(
+  "IJDefault", "Huang", "Huang2", "Intermodes", "IsoData",
+  "Li", "Mean", "MinErrorI", "Minimum", "Moments", "Otsu",
+  "Percentile", "RenyiEntropy", "Shanbhag", "Triangle"
+)
+threshold_krt8 <- purrr::map_chr(thresh_methods, ~ auto_thresh(as.integer(krt8$Krt8), ., ignore_black = T,
+  ignore_white = FALSE,)) %>%
+  tibble(method = thresh_methods, threshold = .)
+
+threshold_krt8$threshold=as.numeric(threshold_krt8$threshold)
+
+thr_krt8= 18
+#  median(as.numeric(threshold_krt8$threshold)) 
+
+```
+
+
+```{r}
+dt=dl
+
+for(i in seq_len(length(dt))){
+ #dt[[i]]$sample= names(dt[i])
+  dt[[i]]$thrp16= paste0("thr_p16_" , dt[[i]]$sample)
+   dt[[i]]$threcad= paste0("thr_ecad_" , dt[[i]]$sample)
+    dt[[i]]$thrkrt5= paste0("thr_krt5_" , dt[[i]]$sample)
+     dt[[i]]$thrkrt8= paste0("thr_krt8_" , dt[[i]]$sample)
+      dt[[i]]$thrncad= paste0("thr_ncad_" , dt[[i]]$sample)
+       dt[[i]]$thrvim= paste0("thr_vim_" , dt[[i]]$sample)
+       dt[[i]]$thrki67= paste0("thr_ki67_" , dt[[i]]$sample)
+     }
+```
+
+
+
+```{r}
+data=dt
+
+##Binarize now:
+for(i in seq_len(length(dt))){
+  for(j in seq_len(nrow(dt[[i]]))){
+    
+     dt[[i]]$Cdkn2a[j]= ifelse(dt[[i]]$Cdkn2a[j] <= thr_p16, 0, 1)
+     
+     dt[[i]]$Ecad[j]= ifelse(dt[[i]]$Ecad[j] <= thr_ecad, 0, 1)
+     
+     dt[[i]]$Ncad[j]= ifelse(dt[[i]]$Ncad[j] <= thr_ncad, 0, 1)
+     
+     dt[[i]]$Ki67[j]= ifelse(dt[[i]]$Ki67[j] <= thr_ki67, 0, 1)
+                                       
+    # dt[[i]]$Channel.6.mean[j]= ifelse(dt[[i]]$Channel.6.mean[j] <= thr_krt5[dt[[i]]$thrkrt5[j]], 0, 1)
+     #dt[[i]]$Channel.7.mean[j]= ifelse(dt[[i]]$Channel.7.mean[j] <= thr_krt8[dt[[i]]$thrkrt8[j]], 0, 1)
+     
+     dt[[i]]$Krt5[j]= ifelse(dt[[i]]$Krt5[j] <= thr_krt5, 0, 1)
+     dt[[i]]$Krt8[j]= ifelse(dt[[i]]$Krt8[j] <= thr_krt8, 0, 1)
+     dt[[i]]$Vim[j]= ifelse(dt[[i]]$Vim[j] <= thr_vim, 0, 1)
+  }
+}
+
+qs::qsave(dt, file.path(RDatadir, "List_BinarizedSamples.qs"))
+dtest= do.call(rbind, dt)
+
+#Ineed to remove the STROMA part:
+dtest= dtest[which(rownames(dtest) %in% rownames(tmp)),]
+
+
+```
+
+
+```{r}
+pdf(paste0(QCdir, "/Nbr_Pos_Neg_Markers_ToThreshold6.pdf"), height = 8, width = 14)
+  n=as.data.frame.matrix(table(dtest$Cdkn2a, dtest$thrp16))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("P16")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Ecad, dtest$threcad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ecad")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Krt5, dtest$thrkrt5))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt5")
+   print(p)
+   n=as.data.frame.matrix(table(dtest$Krt8, dtest$thrkrt8))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt8")
+   print(p)
+    n=as.data.frame.matrix(table(dtest$Ncad, dtest$thrncad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ncad")
+   print(p)
+   
+    n=as.data.frame.matrix(table(dtest$Vim, dtest$thrvim))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Vim")
+   print(p)
+   
+   
+    n=as.data.frame.matrix(table(dtest$Ki67, dtest$thrki))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ki")
+   print(p)
+   
+dev.off()
+```
+
+
+Add the information on the spatial location:
+
+```{r}
+dtest$thrp16= paste0(dtest$thrp16, "_", dtest$sample)
+dtest$threcad= paste0(dtest$threcad, "_", dtest$sample)
+dtest$thrkrt5= paste0(dtest$thrkrt5, "_", dtest$sample)
+dtest$thrkrt8= paste0(dtest$thrkrt8, "_", dtest$sample)
+dtest$thrncad= paste0(dtest$thrncad, "_", dtest$sample)
+dtest$thrvim= paste0(dtest$thrvim, "_", dtest$sample)
+dtest$thrki67= paste0(dtest$thrki67, "_", dtest$sample)
+
+
+pdf(paste0(QCdir, "/Binarised_Data.pdf"), height = 8, width = 14)
+  
+  n=as.data.frame.matrix(table(dtest$Cdkn2a, dtest$thrp16))
+  n$class=c("neg", "pos")
+   
+  p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("P16") 
+   print(p)
+  ##
+   n=as.data.frame.matrix(table(dtest$Ecad, dtest$threcad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ecad")
+   print(p)
+   ##
+    n=as.data.frame.matrix(table(dtest$Ncad, dtest$thrncad))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ncad")
+   print(p)
+   ##
+   n=as.data.frame.matrix(table(dtest$Krt5, dtest$thrkrt5))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt5")
+   print(p)
+   ####
+   n=as.data.frame.matrix(table(dtest$Krt8, dtest$thrkrt8))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt8")
+   print(p)
+   ###
+   n=as.data.frame.matrix(table(dtest$Vim, dtest$thrvim))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Vim")
+   print(p)
+  ###
+     n=as.data.frame.matrix(table(dtest$Ki67, dtest$thrki67))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=value )) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ki67")
+   print(p)
+dev.off()
+```
+
+
+```{r}
+identical(rownames(dtest), rownames(tmp))
+dtest$Parent=tmp$Parent
+qs::qsave(dtest,paste0(RDatadir, "/Thresholded_matrix_Binarized_WoStroma.qs"))
+```
+
+
+```{r}
+pdf(paste0(QCdir, "/Pos_Neg_Parent_Markers.pdf"), height = 8, width = 14)
+  
+  n=as.data.frame.matrix(table(dtest$Cdkn2a, dtest$Parent))
+  n$class=c("neg", "pos")
+   
+  p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value ))) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("P16") 
+   print(p)
+  ##
+   n=as.data.frame.matrix(table(dtest$Ecad, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value )) ) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ecad")
+   print(p)
+   
+   ##
+   n=as.data.frame.matrix(table(dtest$Ncad, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value )) ) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ncad")
+   print(p)
+   ##
+   n=as.data.frame.matrix(table(dtest$Krt5, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value ))) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt5")
+   print(p)
+   ####
+   n=as.data.frame.matrix(table(dtest$Krt8, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value )) ) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Krt8")
+   print(p)
+   ###
+   n=as.data.frame.matrix(table(dtest$Vim, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value )) ) + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Vim")
+   print(p)
+  ###
+     n=as.data.frame.matrix(table(dtest$Ki67, dtest$Parent))
+  n$class=c("neg", "pos")
+   p <- n %>% melt() %>% ggplot(aes(x= variable, fill= class, y=log10(value )))  + geom_bar(stat="identity")  + themplot + coord_flip() + ggtitle("Ki67")
+   print(p)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+markers_to_analyze2 <- c(colnames(CreN_5M_7060 %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+
+markers_to_analyze <- c(colnames(Juxta_7412 %>% dplyr::select(dplyr::starts_with("Cell..")) %>% dplyr::select(dplyr::ends_with("mean"))), "Parent")
+
+
 
 dl=lapply(dl, function(x) {
   x = x %>% dplyr::select(markers_to_analyze)
@@ -88,15 +591,29 @@ for(i in seq_len(length(dl))){
   dl[[i]]$sample= names(dl[i])
 }
 
-to.threshold= paste0("Channel.", c(2,3,6,7,8,9), ".mean")
-
+#to.threshold= paste0("Channel.", c(2,3,6,7,8,9), ".mean")
+to.threshold= paste0("Channel.", c(1,2,3,4,5,6,7,8,9), ".mean")
 dt= lapply(dl, function(x) {
   x= x %>% dplyr::select(c(to.threshold,"Parent") )
 })
 
+dt=dl
+
 for(i in seq_len(length(dl))){
   dt[[i]]$sample= names(dt[i])
 }
+
+
+pdf(paste0(QCdir, "/QC_meanOnly.pdf"))
+   for(i in seq_len(9)){
+
+  p <- dl[[i]] %>% melt() %>% ggplot(aes(x= value)) + 
+  geom_histogram( position = 'identity', bins= 25)  + facet_wrap(. ~ variable, ncol=2) + themplot + ggtitle(names(dl[i]))
+  print(p)
+}
+dev.off()
+
+
 ```
 
 
@@ -212,7 +729,7 @@ p16s= do.call(rbind, dt)
 #p16s= p16s %>% filter(sample== "C_Cre3M" )
 p16s = p16s %>% filter(!sample== "T7071")
 
-densCurve <- density(p16s$Channel.2.mean, adjust=1, cut=0)#
+densCurve <- density(p16s$Cdkn2a, adjust=1, cut=0)#
 inflPoints <- diff(sign(diff(densCurve$y)))
 
 maximumsDens <- which(inflPoints==-2)

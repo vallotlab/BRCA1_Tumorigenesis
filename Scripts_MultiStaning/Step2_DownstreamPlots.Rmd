@@ -9,25 +9,72 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+
+```{r directories creation}
+#the main Dir should be the root directory in which both input, output and script folders are stored
 mainDir= here::here()
-#mainDir= "C:/Users/Melissa S/Desktop/BRCA1_Tumorigenesis/Tumor_BRCA_p53"
-inputDir=  file.path(mainDir,"input", "multistaining", "V_juxta") 
-outputDir= file.path(mainDir, "output", "multiStaining")
+#
+mainDir= "C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/REVIEW"
+inputDir=  file.path(mainDir,"input", "mouse",    "multistaining") 
+outputDir= file.path(mainDir, "output", "mouse","multiStaining")
 #####################
-RDatadir <- file.path(outputDir,"RData2") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
-QCdir <- file.path(outputDir, "QC2") ; if(!file.exists(QCdir)){dir.create(QCdir)}
-PLOTdir <- file.path(outputDir, "Plots2") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+PLOTdir <- file.path(outputDir, "Plots") ; if(!file.exists(PLOTdir)){dir.create(PLOTdir)}
 ```
 
 ```{r}
-mat=qs::qread(paste0(RDatadir, "/Final_Matrix_All_Binarized_Markers.qs"))
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(reshape2)
+library(qdapRegex)
+library(mclust)
+library(stringr)
+library(data.table)
+library(sunburstR)
+```
 
-epith= mat  %>% filter(! Parent== "Stroma") 
- epith= epith %>% filter(! name=="Cre_pos_3M_Duct") 
+```{r}
+creN= epith %>% dplyr::filter(Parent=="CreN") %>% dplyr::filter(Krt8== 1  & Krt5==0 & ) #1088
 
+
+d=as.data.frame(table(creN$Vim, creN$Ncad, creN$Ecad))
+colnames(d)=c("Vim", "Ncad", "Ecad", "Freq")
+
+
+creN$emt= ifelse(creN$Vim==1 & creN$Ncad==1, "Mes", "Ep")
+```
+
+
+```{r}
+juxta= epith %>% dplyr::filter(Parent=="Juxta") %>% dplyr::filter(Cdkn2a==1 & Krt8==1 & Krt5==0)  
+#%>% dplyr::filter(Cdkn2a== 0 ) 
+d=as.data.frame(table(juxta$Vim, juxta$Ncad, juxta$Ecad, juxta$Krt8))
+colnames(d)=c("Vim", "Ncad", "Ecad", "Krt8","Freq")
+
+```
+
+```{r}
+mmT= epith %>% dplyr::filter(Parent=="mmT") %>% dplyr::filter(Krt8== 1 & Krt5==0) 
+
+d=as.data.frame(table(mmT$Vim, mmT$Ncad, mmT$Ecad, mmT$Krt8))
+colnames(d)=c("Vim", "Ncad", "Ecad", "Krt8", "Freq")
+####
+mat=matrix(data=c(1976,33,13664,261 ), byrow = TRUE)
+```
+
+```{r}
+mat=dtest
+mat=qs::qread(paste0(RDatadir, "/Thresholded_matrix_Binarized_WoStroma.qs"))
+mat$name=paste0(mat$sample,"_", mat$Parent)
+#epith= mat  %>% filter(! Parent== "Stroma") 
+# epith= epith %>% filter(! name=="Cre_pos_3M_Duct") 
+
+epith= mat
 epith$Epithtype= ifelse(epith$Krt5== 1 & epith$Krt8== 0, "Basal", ifelse(epith$Krt5== 0 & epith$Krt8== 1, "Luminal", ifelse(epith$Krt5== 1 & epith$Krt8== 1, "Krt5Krt8p", "none")))
-epith= epith %>% select(! c("Krt5", "Krt8", "H3K27me3"))
+
+epith= epith %>% select(! c("Krt5", "Krt8", "Hemato"))
 epith$Cdkn2a= ifelse(epith$Cdkn2a== 0, "p16neg", "p16pos")
 epith$Ki67= ifelse(epith$Ki67== 0, "Ki67neg", "Ki67pos")
 epith$EMstate = ifelse(epith$Ecad== 1 & epith$Ncad== 0 , "Epithelial",
@@ -49,6 +96,14 @@ n= as.data.frame(table(epith$name))
 colnames(n)= c("Var1", "TotFreq")
 ```
 
+```{r}
+n= as.data.frame(table(epith$Parent))
+colnames(n)= c("Var1", "TotFreq")
+epith=mat
+p16p= epith %>% filter(Cdkn2a== "1")
+
+p16p= as.data.frame(table(p16p$Parent))
+```
 
 
 Show the existence of p16 positive cells:
@@ -72,6 +127,11 @@ g <- p16p %>% ggplot(aes(x= factor(Var1), y= freq_ratio)) + geom_bar(stat="ident
 print(g)
 dev.off()
 
+```
+
+
+```{r}
+tb=matrix(a=c(66, 125), b=c(938, 3622))
 ```
 
 ##B: existance of p16 positive cells per Condition: Duct, Lesion, Tumor:
@@ -155,8 +215,9 @@ Figure B:Existance of p16 positive cells:
 ```{r}
 epith= mat  %>% filter(! Parent== "Stroma") %>% filter(! name=="Cre_pos_3M_Duct") 
 
+epith=mat
 epith$Epithtype= ifelse(epith$Krt5== 1 & epith$Krt8== 0, "Basal", ifelse(epith$Krt5== 0 & epith$Krt8== 1, "Luminal", ifelse(epith$Krt5== 1 & epith$Krt8== 1, "Krt5Krt8p", "none")))
-epith= epith %>% select(! c("Krt5", "Krt8", "H3K27me3"))
+epith= epith %>% select(! c("Krt5", "Krt8", "Hemato"))
 epith$Cdkn2a= ifelse(epith$Cdkn2a== 0, "p16neg", "p16pos")
 epith$Ki67= ifelse(epith$Ki67== 0, "Ki67neg", "Ki67pos")
 epith$EMstate = ifelse(epith$Ecad== 1 & epith$Ncad== 0 , "Epithelial",
@@ -180,32 +241,37 @@ p16p$percentage= p16p$Freq / p16p$TotFreq * 100
 p16p$Var1=as.factor(p16p$Var1)
 
 #p16p$Var1= Relevel(p16p$Var1, ref= c("Cre_neg_5M_Duct", "Cre_pos_3M_Duct","T7071_Duct","mlesion_7058_mlesion","T99_5617_mlesion_mlesion","T99_5617_Tumeur_Tumor","T7071_Tumor"))
-p16p$Parent=c("DuctNeg", "Duct","Duct","mLesion", "Duct", "Tumor", "mLesion", "Tumor", "Duct")
+p16p$Parent= gsub(".*_", "", p16p$Var1)
 library(Epi)
-p16p$Parent= Relevel(p16p$Parent, ref=c("DuctNeg", "Duct", "mLesion", "Tumor"))
+
+p16p$Parent= Relevel(p16p$Parent, ref=c("CreN", "Juxta", "mmT", "Tumor"))
+
+
+m= data.frame("Var1"= c("CreN_5M_7060_CreN"), "Freq"=1, "TotFreq"=0,"percentage"=0.1, Parent="CreN")
+p16p= rbind(p16p, m)
 
 pdf(paste0(PLOTdir, "/FigB_DotPlot_Percentage_p16positive.pdf"))
 p <- p16p %>% ggplot(aes(x= factor(Parent), y=percentage, fill= Var1 ))+ geom_dotplot(binaxis = "y", stackdir = "center" ,dotsize=0.5) + themplot + ylab("Percentage of sample")
 print(p)
 dev.off()
 
-m= data.frame("Var1"= c("mlesion_7058_Duct","T99_5617_mlesion_Duct"), "Freq"=0, "TotFreq"=0,"percentage"=0, Parent=c("Duct", "Duct"))
-p16p= rbind(p16p, m)
+
+p16mat=p16p
 ```
 
 Compare :
 Compute Fischer test :
-
 ```{r}
 epith2= epith
-epith2$Parent= ifelse(epith2$name== "Cre_neg_5M_Duct", "Duct_Neg", epith2$Parent)
+#epith2$Parent= ifelse(epith2$name== "Cre_neg_5M_Duct", "Duct_Neg", epith2$Parent)
 p16p=as.data.frame.matrix(table(epith2$Parent, epith$Cdkn2a))
 ```
 
 ```{r}
+p16p=as.data.frame.matrix(table(epith2$Parent, epith2$Cdkn2a))
 ### Compute pairwise Chi2 test:
 cmb=combn(x= rownames(p16p), 2) %>% as.data.frame()
-cmb=cmb[,c(1,2,6)]
+#cmb=cmb[,c(1,2,6)]
 
 for(i in seq(1, ncol(cmb))){
   res=fisher.test(p16p[cmb[1:2,i],],workspace=2e8)$p.value
@@ -223,9 +289,12 @@ gc()
 
 Origin of p16 positive cells:
 ```{r}
+epith=mat
+
 p16p= epith %>% filter(Cdkn2a== "p16pos")
-p16p= as.data.frame(table(p16p$Epithtype))  #13277 
-p16p$percentages= p16p$Freq/13277 * 100
+p16p= as.data.frame(table(p16p$Epithtype))  #14128
+
+p16p$percentages= p16p$Freq/ 14128 * 100
 
 
 # Compute the cumulative percentages (top of each rectangle)
@@ -254,28 +323,24 @@ dev.off()
 Cycle:
 barplot percentages:
 ```{r}
-epith2= epith %>% filter(! name== "Cre_neg_5M_Duct")
-#####
-epith2= epith
-epith2$Parent= ifelse(epith2$name== "Cre_neg_5M_Duct", "Duct_Neg", epith2$Parent)
-###########
-epith2$Parent= ifelse(epith2$Parent=="Duct_Juxta", "Duct", epith2$Parent)
 
 
-n= as.data.frame(table(epith2$Parent))
+
+n= as.data.frame(table(epith$Parent))
 colnames(n)= c("Var1", "TotFreq")
 ###
-epith$Parent= ifelse(epith$Parent=="Duct_Juxta", "Duct", epith$Parent)
 
-p16lum2= epith %>% filter(Cdkn2a=="p16pos") %>% filter(! name== "Cre_neg_5M_Duct")
+
+p16lum2= epith %>% filter(Cdkn2a=="p16pos") #%>% filter(! Parent== "CreN" )
 dt.p16lum=as.data.frame(table(p16lum2$Parent, p16lum2$Ki67))
 
 ##
 dt.p16lum= merge(dt.p16lum, n, by="Var1")
-writexl::write_xlsx(dt.p16lum, paste0(RDatadir, "/C_PositiveP16cells_Cycle_Parent_WOCre5M.xlsx"))
-dt.p16lum= readxl::read_excel(paste0(RDatadir, "/C_PositiveP16cells_Cycle_Parent_WOCre5M.xlsx"))
+
+writexl::write_xlsx(dt.p16lum, paste0(RDatadir, "/C_PositiveP16cells_Cycle_Parent_WCreN.xlsx"))
+dt.p16lum= readxl::read_excel(paste0(RDatadir, "/C_PositiveP16cells_Cycle_Parent_WOCre5N.xlsx"))
 ########
-tmp2= epith %>% filter(! name=="Cre_neg_5M_Duct")
+tmp2= epith #%>% filter (Parent== "CreN")
 n= as.data.frame(table( tmp2$Ki67))
 colnames(n)= c("Var2", "Freq")
 n$Var1="Epithelial"
@@ -284,12 +349,10 @@ n=n[, c("Var1", "Var2", "Freq", "TotFreq")]
 ###
 dt.p16lum= rbind(dt.p16lum, n)
 
-pdf(paste0(PLOTdir, "/D_Barplot_P16positiveCycling_Parent_Pooled.pdf"))
-g <- dt.p16lum %>% ggplot(aes(x= factor(Var1), y=Freq, fill= Var2)) + geom_bar(stat="identity",position="fill", color="black") + ylab("% from p16 positive cells") + ggtitle("Cycle_P16positive cells") + scale_fill_manual(values=c("Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0"))  #+themplot
+pdf(paste0(PLOTdir, "/D_Barplot_P16positiveCycling_Parent_Pooled2Epith.pdf"))
+g <- dt.p16lum %>% ggplot(aes(x= factor(Var1), y=Freq, fill= Var2)) + geom_bar(stat="identity",position="fill", color="black") + ylab("% from p16 positive cells") + ggtitle("Cycle_P16positive cells") + scale_fill_manual(values=c("Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0"))  +themplot
 print(g)
 
-g <- dt.p16lum %>% ggplot(aes(x= factor(Var1), y=Freq, fill= Var2)) + geom_bar(stat="identity",position="fill", color="black") +themplot + ylab("% from p16 positive cells") + ggtitle("Cycle_P16positive cells") + scale_fill_manual(values=c("Ki67neg"= "#839BDE","Ki67pos"= "#3C6CF0")) + coord_flip()
-print(g)
 dev.off()
 ```
 
