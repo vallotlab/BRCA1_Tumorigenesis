@@ -1,4 +1,4 @@
-# Luminal progenitors undergo partial epithelial-to-mesenchymal transition during basal-like breast tumorigenesis (Landragin et al. 2022, BioRxiv)
+# Pre-tumoral states and malignant transformation in BRCA1 mutation carriers
 
 
 
@@ -6,7 +6,7 @@
 ## 0.0 Setup Instructions - input folder
 * To start the analysis and reproduce the results as in the paper, the folder **BRCA1_Tumorigenesis** has to be downloaded as it is. 
 * Once placed at the root directory, the user creates both an **input** and **output** empty folders.
-* The user has to download the input data (count matrices) from GSEXXX, and place it in the "input" folder
+* The user has to download the input data (count matrices) from GSE200444, and place it in the "input" folder
 * In the input folder, each data_type has to be organized in its own sub-folder. Its architecture should be as following:
 ```
 input
@@ -18,11 +18,19 @@ input
 │   └── snRNAseq
 │       └── juxtaTumor
 │           ├── filtered_matrices
-│           │   ├── patient_1
-│           │   ├── patient_2
-│           │   ├── patient_3
-│           │   ├── patient_4
-│           │   └── patient_5
+│           │   ├── S1_BRCA1_WT
+│           │   ├── S2_BRCA1_WT
+│           │   ├── S3_BRCA1_WT
+│           │   ├── S4_BRCA1_WT
+│           │   ├── S5_BRCA1_WT
+                ├── S6_BRCA1_WT
+                ├── S1_BRCA1_mut
+                ├── S2_BRCA1_mut
+                ├── S3_BRCA1_mut
+                ├── S4_BRCA1_mut
+                ├── S5_BRCA1_mut
+                └── S6_BRCA1_mut
+           
 │           
 └── mouse
     ├── multistaining
@@ -31,12 +39,17 @@ input
     └── scRNAseq
         └── invivo
             └── Count_Matrices
-                ├── Control_Cre+2.7M
-                ├── Control_Cre+3M
-                ├── Control_Cre+5.2M
-                ├── Medium_Tumor
-                ├── Small_Tumor
-                └── Large_Tumor
+                ├── CreN_6m
+                ├── CreN_5m_a
+                ├── CreN_5m_b
+                ├── CreP_2.7m
+                ├── CreP_3m
+                ├── CreP_5m
+                ├── mmT_5.4m
+                ├── mmT_5.2m
+                ├── T2
+                ├── T1
+                └── T3
 ```                
 
 ## 0.0 Setup Instructions - output folder
@@ -60,27 +73,19 @@ The output folder contains the figures, Rdata files, output from the scripts. Si
 │   ├── Step0_2_BRCA_ClusterAnnotation.Rmd
 │   ├── Step1_1_EpithelialCompartment_Annot.Rmd
 │   ├── Step1_2_DiffExpression_PEA.Rmd
-│   ├── Step2_3_Pseudotime_3_Slingshot_1_Inference.Rmd
-│   ├── Step2_Pseudotime_1_PHATE.Rmd
-│   ├── Step2_Pseudotime_2_PAGA_Python_R.Rmd
-│   ├── Step2_Pseudotime_3_Slingshot_2_PEA.Rmd
+│   ├── Step2_1_PAGA_Python_R.Rmd
 │   ├── Step3_1_CNVInference.Rmd
 │   ├── Step3_2_CNVmatrixBinarization.Rmd
-│   ├── Step3_3_Alterations_PerChromosome.Rmd
-│   ├── Step3_4_ConcensusClustering.Rmd
-│   ├── Step3_5_IntraClusterCorrelation.Rmd
-│   ├── Step3_6_Hetmap_Alterations.Rmd
-│   ├── Step3_7_CommonAlterations.Rmd
-│   ├── Step4_Counting_MicroFoci_Orga_InVivo.Rmd
-│   ├── Step5_TF_Enrichment_1_CHEA3.Rmd
-│   ├── Step5_TF_Enrichment_2_SCENIC.Rmd
-│   ├── global_var_current.R
-│   └── invivo_Mouse_Stroma_Annotation.Rmd
-
-├── Tumor_BRCA_p53
+│   ├── Step3_3_ConcensusClustering.Rmd
+│   ├── Step3_4_IntraClusterCorrelation.Rmd
+│   ├── Step3_5_Hetmap_Alterations.Rmd
+│   ├── Step4_1_invivo_Mouse_Stroma_Annotation.Rmd
+│   ├── Step4_TF_Enrichment_CHEA3.Rmd
+│   ├── Step4_invivo_Mouse_CellCellCommunication.Rmd
+│   └── global_var_current.R
 ├── global_var_current.Rmd
 ├── global_variables.Rmd
-├── scRNAseq_Functions.Rmd
+└── scRNAseq_Functions.Rmd
 ```
 
 + multi staining data from mammary gland samples 
@@ -92,13 +97,14 @@ The output folder contains the figures, Rdata files, output from the scripts. Si
 ```
 
 
-+ juxta-tumor samples from BRCA1 human carriers 
++ MAYA analysis on juxta-tumor samples from BRCA1 WT and mutated human carriers, and Pal et al and Nee et al datasets 
 ```
-├── Scripts_JuxtaTumor_Human
-│   ├── Step1_Juxta_Allcompartments.Rmd
-│   ├── Step2_Juxta_EpithelialCompartment.Rmd
-│   ├── Step3_Juxta_EpitheCompartment_inferCNV.Rmd
-│   └── Step4_TF_Enrichment.Rmd
+├── Scripts_MAYA_Human
+│   ├── 0_HU_QC.Rmd
+│   ├── 1_HU_MAYA_ALL.Rmd
+│   ├── 2_HU_MAYA_EPITHELIAL.Rmd
+│   ├── 3_HU_CNV.Rmd
+│   └── 4_HU_MAYA_PAL.Rmd
 ```
 
 
