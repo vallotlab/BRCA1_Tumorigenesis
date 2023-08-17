@@ -1,0 +1,593 @@
+---
+title: "2_HU_MAYA_EPITHELIAL"
+author: "Melissa"
+date: "17/08/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+inputDir="C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/input/human/snRNAseq/All_cohorts/"
+outputDir= "C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/output/human"
+
+##
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+figDir= file.path(outputDir, "Figures") ; if(!file.exists(annotDir)){dir.create(annotDir)}
+cnvDir= file.path(outputDir, "CNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+```
+
+```{r}
+library(ggExtra)
+library(cowplot)
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+```
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+```{r}
+seu=qs::qread(file.path(QCdir, "Raw_Seurat_Filtered.qs"))
+df_all= seu@assays$RNA@counts
+md_all=seu@meta.data
+#read the MAYA All list:
+md_allH=qs::qread( file.path(RDatadir, "List_MAYA_All_MdAll.qs"))[[1]]
+md_all=qs::qread( file.path(RDatadir, "List_MAYA_All_MdAll.qs"))[[2]]
+```
+
+Extract the cells corresponding to epithelial cells:
+```{r}
+
+selection <- rownames(md_allH[md_allH$cell_annotation %in% c("Luminal epithelial cells","Myoepithelial cells","Epithelial cells"),])
+
+sub_meta <- md_allH[rownames(md_allH) %in% selection,]
+
+
+
+df_epithelial <- df_all[,selection]
+md_epith <- sub_meta
+
+
+md_epithH<-MAYA_pathway_analysis(expr_mat=df_epithelial,
+                                            modules_list = "hallmark",
+                                            is_logcpm=F)
+
+gc()
+
+```
+
+
+perform consensus clustering on the epithelial cells only:
+```{r}
+bsl= md_epithH$activity_matrix
+library(ConsensusClusterPlus) 
+
+results = ConsensusClusterPlus(bsl,
+                                maxK= 12,
+                                reps=100,
+                                pItem=0.8,
+                                pFeature=0.8, 
+                                title= "CC_Epith_HU_2",
+                                clusterAlg="hc",
+                                distance="pearson",
+                                innerLinkage= "ward.D",
+                                finalLinkage="ward.D",
+                                seed=3.14,plot="png")
+ 
+ qs::qsave(results, paste0(RDatadir, "/CC_Epith_HU.qs") )
+ ###
+  res= calcICL(results,title=paste0(RDatadir,"/CC_Epith_HU_consensus_cluster"),plot="pdf",writeTable=FALSE)
+  
+  qs::qsave(res, paste0(RDatadir, "/CC_Epith_HU_Results.qs"))
+  
+  
+c3=  results[[3]]$consensusMatrix
+```
+
+cut to 4 clusters:
+```{r}
+library(dendextend)
+
+mt=scale_0_1(md_epithH$activity_matrix)
+dend=hclust(dist(t(mt)), method="ward.D2")
+
+dend <- dendextend::color_branches(dend, k = 4)
+dend <- dendextend::color_labels(dend, k = 4)
+###
+pdf(paste0(figDir, "/Fig0b_All_MAYA_Type_ScaledMat.pdf"))
+plot(dend, labels=FALSE)
+dev.off()
+
+
+res7=cutree(tree=dend,k=4)  #5 seems the optimal number of clusters
+res7=as.data.frame(res7)
+colnames(res7)= "GroupID"
+res7$cell=rownames(res7)
+
+identical(rownames(res7),rownames(md_epith))
+
+md_epith$ClustH_dendro= res7$GroupID
+qs::qsave(md_epith, file.path(figDir, "md_epith_FINAL.qs"))
+```
+
+
+
+plot the heatmap with info on BRCA:
+```{r}
+md_epith$ClustH_dendro=paste0("C", md_epith2$ClustH_dendro)
+
+epith_cols= met.brewer(name="Austria",n=length(unique(md_epith$ClustH_dendro)),type="discrete")
+names(epith_cols)= unique(md_epith$ClustH_dendro)
+
+metadata= data.frame("subtype"=md_epith$ClustH_dendro, "BRCA"= md_epith$BRCA)
+rownames(metadata)= rownames(md_epith)
+#metadata= metadata[, -1] %>% as.data.frame()
+
+colours <- list("subtype"=epith_cols, "BRCA"= c("BRCA mut"="darkgreen", "BRCA WT"="grey"))
+####---------------------##
+colAnn <- HeatmapAnnotation(df = metadata,
+  which = 'col',
+  col = colours,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(0.5, 'mm'))
+#identical(rownames(metadata), rownames(AUCmatrix))
+```
+
+
+```{r}
+
+split <- factor( metadata$subtype,levels = c("C2", "C4","C3","C1" )) #,"Apod+ T_1"
+
+scaled_mat = scale_0_1(md_epithH$activity_matrix)
+
+
+
+hmap <- Heatmap(
+  scaled_mat,
+  name = "ActMat",
+  col = viridis(50, direction = 1), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  #width = unit(100, "mm"),
+  top_annotation=colAnn,row_names_gp = gpar(fontsize = 8, fontfamily = "sans"),column_split=split,column_names_gp = gpar(fontsize = 4, fontfamily = "sans"), use_raster=TRUE)
+
+
+
+pdf(paste0(figDir, "/Heatmap_ActivityMatrix_subtype_BRCA.pdf"), height = 10, width = 12)
+draw(hmap, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+#---------
+png(paste0(figDir, "/Heatmap_ActivityMatrix_subtype_BRCA.png"), height = 2000, width = 2800, res=300)
+print(hmap)
+dev.off()
+```
+
+
+Redo the UMAP:
+```{r}
+library(MetBrewer)
+
+col=c("BRCA mut"="darkgreen", "BRCA WT"="grey")
+##Other representation with non transparent circles, need shuffling to have a representation of all
+umap_custom <- as.data.frame(md_epithH$umap$layout)
+colnames(umap_custom)= c("UMAP_1","UMAP_2")
+
+metada_cells_col <- col[match(md_epith$BRCA,names(col))]
+draw <- sample(1:dim(umap_custom)[1])
+
+
+dt=as.data.frame(table( md_epith$BRCA, md_epith$ClustK_dendro))
+
+pdf(paste0(figDir, "/Barplot_Epith_BRCA.pdf"))
+p <- ggplot(dt ,aes(x= Var2, y= Freq, fill= Var1))+ 
+  geom_bar(stat="identity", position = "fill",show.legend = T,col="black",width=0.8) + scale_fill_manual(values=c( "darkgreen","grey"))  + themplot
+print(p)
+dev.off()
+
+
+
+png(paste0(figDir,"/Fig_Umap_EPITH_BRCA.png"),height=2000, width = 2000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2.5, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + NoLegend() + NoAxes()
+print(p)
+dev.off()
+
+#plot subtype:
+umap_custom <- as.data.frame(md_epithH$umap$layout)
+colnames(umap_custom)= c("UMAP_1","UMAP_2")
+
+metada_cells_col <- epith_cols[match(md_epith$ClustH_dendro,names(epith_cols))]
+draw <- sample(1:dim(umap_custom)[1])
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2.5, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + NoLegend() + NoAxes()
+
+png(paste0(figDir,"/Fig_Umap_EPITH_SUBTYPE.png"),height=2000, width = 2000,res=300)
+print(p)
+dev.off()
+```
+
+
+DONUT PLOT DISTRIBUTION OF ALL THE EPITHELIAL CLUSTERS:
+
+Donut plot of the distribution of C3:
+```{r}
+col= rev(c(met.brewer(name="Renoir",n=6,type="discrete"),met.brewer(name="Austria",n=6,type="continuous")))
+ names(col)=unique(md_all$orig.ident)
+
+
+sbt=unique(md_epith$ClustH_dendro)
+
+dt <- data.frame("subtype"= md_epith$ClustH_dendro, "sample"= md_epith$orig.ident) %>% dplyr::filter( subtype %in% sbt)
+
+
+
+for( samp in sbt){
+  
+dt1<-  dt %>% dplyr::filter(subtype== samp)
+#same as: DescTools::Entropy(table(dt1$sample), base = 10
+D= diversity(as.data.frame(table(dt1$sample))$Freq, "shannon", base= 10)
+print(D)
+dt1 = dt1 %>%
+  group_by(sample)%>% 
+  dplyr::count()%>% 
+  ungroup()%>% 
+  arrange(desc(sample)) %>%
+  mutate(percentage = round(n/sum(n),8)*100,
+         lab.pos = cumsum(percentage)-.5*percentage)
+dt1$sample=as.factor(dt1$sample)
+
+
+p <- ggplot(data = dt1, 
+       aes(x = 2, y = percentage, fill = sample))+
+  geom_bar(stat = "identity", show.legend = T)+
+  coord_polar("y", start = 200) +
+  geom_text(aes(y = lab.pos, label = paste(percentage,"%", sep = "")), col = "white") +
+  theme_void() +
+  scale_fill_manual(values= col)+
+  xlim(.2,2.5) + ggtitle(D)
+
+pdf(paste0(figDir, "/Fig_1Dbis_DonutPlot_Origin_",samp,"_F.pdf"), height = 5, width = 7)
+print(p)
+dev.off()
+}
+```
+
+
+Stack violin of top markers:
+```{r}
+
+median.stat <- function(x){
+    out <- quantile(x, probs = c(0.5))
+    names(out) <- c("ymed")
+    return(out) 
+}
+
+pdf(paste0(figDir, "/Vln_Markers2.pdf"))
+p <- VlnPlot(epith, rev(c("KRT5", "KRT8", "ELF5", "KIT", "PRLR", "LDLR",  "FOSB")), group.by = "ClustH_dendro",  stack = T, pt.size = 0, same.y.lims = TRUE, log = F, fill.by="ident", cols = epith_cols) + NoLegend()  +
+    stat_summary(fun.y = median.stat, geom='point', size = 2, colour = "black") 
+print(p)
+dev.off()
+```
+
+
+get the top contributing genes per pathway:
+
+```{r}
+n=10
+PCA_object=md_epithH$PCA_obj
+module=names(md_epithH$PCA_obj)[1]
+#rownames(md_epithH$activity_matrix)
+
+top_genes= function(PCA_object, module, n){
+  nb_comp <- length(PCA_object[[module]]$expl_var)
+    
+top_genes <- c()
+contrib <- t(PCA_object[[module]]$gene_contrib)
+    if (nb_comp == 1) {
+        contrib <- contrib[order(contrib, decreasing = T), ]
+        names <- names(contrib)
+        top_genes <- names[1:n]
+        top_genes=as.data.frame(top_genes)
+        colnames(top_genes)=module
+    }
+    else{
+        comp <- sapply(colnames(contrib), function(x) strsplit(x, 
+            "PC")[[1]][2])
+        
+        list_top_genes <- lapply(comp, function(x) {
+            contrib <- contrib[order(contrib[, paste0("PC", 
+                x)], decreasing = T), ]
+            names <- names(contrib[, paste0("PC", x)])
+            names[1:n]
+        })
+        
+        top_genes <- do.call(cbind,list_top_genes) %>% as.data.frame()
+         colnames(top_genes)=paste0(module,"_mode", comp)
+    }
+
+return(top_genes)
+  
+}
+tg=data.frame("start"=rep(NA,10))
+
+  
+  for(i in seq(1, length(PCA_object))){
+    module=names(PCA_object)[i]
+    m= top_genes(PCA_object, names(PCA_object)[i],n=10)
+    tg=cbind(tg,m)
+  }
+   writexl::write_xlsx(tg, file.path(RDatadir, "Top_Contrib_Genes_Modules_Epith_HU_Juxta.xlsx"))
+```
+
+
+From the activity matrix, check the most differetial:
+```{r}
+library(presto)
+help(wilcoxauc)
+X= md_epithH$activity_matrix %>% as.data.frame()
+
+#X=t(X) %>% as.data.frame()
+identical(colnames(X), colnames(epith))
+
+cells=subset(epith, ClustH_dendro %in% c("C1", "C3", "C4") )
+X=X[, colnames(cells)]
+
+y= ifelse(cells$ClustH_dendro=="C3", "BRCA1_luminal", "Luminal")
+
+
+diff= presto::wilcoxauc(X=X, y= y)
+diff=diff %>% dplyr::filter(padj < 0.01)
+diff=diff[which(abs(diff$logFC) > 0.4),]
+
+diff=diff %>% dplyr::filter(group=="BRCA1_luminal")
+
+writexl::write_xlsx(diff, file.path(RDatadir, "Wilcox_Hallmark_Brca1LumvsLum.xlsx"))
+```
+
+
+```{r}
+dt= md_epithH$activity_matrix[which(rownames(md_epithH$activity_matrix) %in% unique(diff$feature)),]
+dt= dt %>% t() %>% as.data.frame()
+dt$type=epith$ClustH_dendro
+
+pdf(file.path(figDir, "DiffPathways_Wilcox_Clusters_UpDown_Padj001.pdf"))
+for(i in colnames(dt)[-ncol(dt)]){
+  dt2= dt[,c(i, "type")]
+  p=dt2 %>% reshape2::melt() %>% ggplot( aes(x= type, y= value, fill= type)) + geom_violin() + themplot + scale_fill_manual(values= c("darkgreen","grey")) + ggtitle(i) + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = type, y = value)) + scale_fill_manual(values= epith_cols)
+  print(p)
+}
+ dev.off()
+```
+
+
+
+
+```{r}
+flattenCorrMatrix <- function(cormat, pmat) {
+               ut <- upper.tri(cormat)
+               data.frame(
+               row = rownames(cormat)[row(cormat)[ut]],
+               column = rownames(cormat)[col(cormat)[ut]],
+               cor  =(cormat)[ut],
+               p = pmat[ut]
+               )
+}
+
+```
+
+```{r}
+maya=subset(seu, cells= rownames(md_epithH))
+res<-rcorr(as.matrix(maya@assays$RNA@data))
+
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+heatmap(x = res, col = col, symm = TRUE)
+
+
+cormat <- flattenCorrMatrix(res$r, res$P)
+
+```
+
+
+
+plot the heatmap with info on BRCA:
+```{r}
+md_epith$ClustH_dendro=paste0("C", md_epith$ClustH_dendro)
+
+epith_cols= met.brewer(name="Austria",n=length(unique(md_epith$ClustH_dendro)),type="discrete")
+names(epith_cols)= unique(md_epith$ClustH_dendro)
+
+metadata= data.frame("subtype"=md_epith$ClustH_dendro, "BRCA"= md_epith$BRCA)
+rownames(metadata)= rownames(md_epith)
+#metadata= metadata[, -1] %>% as.data.frame()
+
+colours <- list("subtype"=epith_cols, "BRCA"= c("BRCA mut"="darkgreen", "BRCA WT"="grey"))
+####---------------------##
+colAnn <- HeatmapAnnotation(df = metadata,
+  which = 'col',
+  col = colours,
+  annotation_width = unit(c(1, 4), 'cm'),
+  gap = unit(0.5, 'mm'))
+#identical(rownames(metadata), rownames(AUCmatrix))
+```
+
+
+```{r}
+
+split <- factor( metadata$subtype,levels = c("C2", "C4","C3","C1" )) #,"Apod+ T_1"
+
+scaled_mat = res$r
+
+
+
+hmap <- Heatmap(
+  scaled_mat,
+  name = "ActMat",
+ # col = viridis(50, direction = 1), 
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  cluster_rows =TRUE,
+  cluster_columns = TRUE,
+  show_column_dend = TRUE,
+  show_row_dend = TRUE,
+  row_dend_reorder = FALSE,
+  column_dend_reorder = FALSE,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  #width = unit(100, "mm"),
+  top_annotation=colAnn,row_names_gp = gpar(fontsize = 8, fontfamily = "sans"),column_split=split,column_names_gp = gpar(fontsize = 4, fontfamily = "sans"), use_raster=TRUE)
+
+
+
+pdf(paste0(figDir, "/Heatmap_PairwiseCorrelation.pdf"), height = 10, width = 12)
+draw(hmap, heatmap_legend_side="right", annotation_legend_side="right")
+dev.off()
+#---------
+png(paste0(figDir, "/Heatmap_PariwiseCorrelation.png"), height = 2000, width = 2800, res=300)
+print(hmap)
+dev.off()
+```
+
+
+
+```{r}
+maya=epith
+maya$class= paste0(maya$ClustH_dendro,"_",maya$BRCA)
+
+
+c6=subset(maya, class=="C1_BRCA mut")
+mat_c6= c6@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c6))
+tmp <- flattenCorrMatrix(res$r, res$P)
+tmp$clust="C1_BRCA mut"
+
+
+c7=subset(maya, class=="C1_BRCA WT")
+mat_c7= c7@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c7))
+tmp7 <- flattenCorrMatrix(res$r, res$P)
+tmp7$clust="C1_BRCA WT"
+
+
+c4=subset(maya, class=="C2_BRCA mut")
+mat_c4= c4@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c4))
+tmp4 <- flattenCorrMatrix(res$r, res$P)
+tmp4$clust="C2_BRCA mut"
+
+
+
+c3=subset(maya, class=="C2_BRCA WT")
+mat_c3= c3@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c3))
+tmp3 <- flattenCorrMatrix(res$r, res$P)
+tmp3$clust="C2_BRCA WT"
+
+c2=subset(maya, class=="C3_BRCA mut")
+mat_c2= c2@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c2))
+tmp2 <- flattenCorrMatrix(res$r, res$P)
+tmp2$clust="C3_BRCA mut"
+
+
+c1=subset(maya, class=="C3_BRCA WT")
+mat_c1= c1@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c1))
+tmp1 <- flattenCorrMatrix(res$r, res$P)
+tmp1$clust="C3_BRCA WT"
+
+
+c0=subset(maya, class=="C4_BRCA mut")
+mat_c0= c0@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c0))
+tmp0 <- flattenCorrMatrix(res$r, res$P)
+tmp0$clust="C4_BRCA mut"
+
+c00=subset(maya, class=="C4_BRCA WT")
+mat_c00= c00@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c00))
+tmp00 <- flattenCorrMatrix(res$r, res$P)
+tmp00$clust="C4_BRCA WT"
+```
+
+```{r}
+datcor=list("C1_BRCA mut"=tmp$cor , "C1_BRCA WT"=tmp7$cor , "C2_BRCA mut"=tmp4$cor , "C2_BRCA WT"=tmp3$cor, "C3_BRCA mut"=tmp2$cor, "C3_BRCA WT"=tmp1$cor, "C4_BRCA mut"=tmp0$cor, "C4_BRCA WT"=tmp00$cor)  
+  
+
+res2 <- as.data.frame(do.call(cbind, datcor)) 
+qs::qsave(res2, file.path(RDatadir,"PairwiseCorr_Clusters_Brca.qs"))
+
+pdf(file.path(figDir,"IntraCorr_ClusterEpith_BRCA.pdf"))
+p <-  res2 %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable, fill= variable), show.legend = F,width = 4.5) +  geom_boxplot(width = .1, aes(x = variable, y = value)) +
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = variable, y = value)) + ylab("pairwise_IntraClust_Correlation") + themplot 
+  print(p)
+dev.off()
+```
+
+```{r}
+median(res2$`C1_BRCA WT`)/median(res2$`C1_BRCA mut`) #0.9122284
+median(res2$`C2_BRCA WT`)/median(res2$`C2_BRCA mut`) #1.004145
+median(res2$`C3_BRCA WT`)/median(res2$`C3_BRCA mut`) # 1.276811
+median(res2$`C4_BRCA WT`)/median(res2$`C4_BRCA mut`) # 0.9522691
+
+wilcox.test(y=res2$`C1_BRCA WT`, x=res2$`C1_BRCA mut`, paired = FALSE, alternative = "two.sided") # p-value < 2.2e-16
+
+wilcox.test(y=res2$`C2_BRCA WT`, x=res2$`C2_BRCA mut`, paired = FALSE, alternative = "two.sided")
+
+wilcox.test(y=res2$`C3_BRCA WT`, x=res2$`C3_BRCA mut`, paired = FALSE, alternative = "two.sided")
+
+wilcox.test(y=res2$`C4_BRCA WT`, x=res2$`C4_BRCA mut`, paired = FALSE, alternative = "two.sided")
+```
+
+```{r}
+epith=maya
+DefaultAssay(epith)="RNA"
+
+Idents(epith)="ClustH_dendro"
+
+comph= FindMarkers(epith, ident.1 = "3", ident.2 = c("1", "4"), only.pos = F, logfc.threshold = 0.5) %>% dplyr::filter( p_val_adj < 0.05)
+comph$gene= rownames(comph)
+
+comph=comph[-grep("^AC", comph$gene, value = F),]
+
+
+
+comph= comph  %>% arrange(desc(avg_log2FC))
+
+writexl::write_xlsx(comph, file.path(RDatadir, "DEG_C3_vsC14.xlsx"))
+```
+
+```{r}
+l=list(md_all,md_epith,md_allH,d_epithH, md_allH, md_epithH )
+qs::qsave(l,file.path(RDatadir, "/MAYA_save.qs"))
+qs::qsave(epith, file.path(RDatadir, "Epithelial_MAYA_All.qs"))
+```
+

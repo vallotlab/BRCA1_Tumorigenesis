@@ -1,0 +1,225 @@
+---
+title: "3_HU_CNV"
+author: "Melissa"
+date: "17/08/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+inputDir="C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/input/human/snRNAseq/All_cohorts/"
+outputDir= "C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/output/human"
+
+##
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+
+QCdir <- file.path(outputDir, "QC") ; if(!file.exists(QCdir)){dir.create(QCdir)}
+figDir= file.path(outputDir, "Figures") ; if(!file.exists(annotDir)){dir.create(annotDir)}
+cnvDir= file.path(outputDir, "CNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+```
+
+```{r}
+library(ggExtra)
+library(cowplot)
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+```
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+```{r}
+seur=qs::qread(file.path(QCdir, "Raw_Seurat_Filtered.qs"))
+epith=qs::qread(file.path(RDatadir, "Epithelial_MAYA_All.qs"))
+l=qs::qread(file.path(RDatadir, "/MAYA_save.qs"))
+
+md_all=l[[1]]
+md_epith=l[[2]]
+
+md_allH=l[[3]]
+md_epithH=l[[4]]
+```
+
+Check inferCNV:
+```{r}
+fibro= md_all %>% dplyr::filter(MAYA_ID=="Fibroblasts")
+sfibro=subset(seur, cells=rownames(fibro))
+
+
+sfibro$type="Fibroblast"
+epith$type="Epithelial"
+
+seu=merge(sfibro, epith)
+
+
+```
+
+
+
+CNV inference:
+```{r}
+Sys.setenv(JAGS_HOME="C:\\Program Files\\JAGS\\JAGS-4.3.0")
+library("rjags")
+library(infercnv)
+library(ChromSCape)
+data("hg38.GeneTSS")
+gene_annot = hg38.GeneTSS[,c(4,1,2,3)]
+colnames(gene_annot) = NULL
+rownames(gene_annot)= gene_annot[,1]
+gene_annot=gene_annot[,c(2:4)]
+#########################
+sinfer= subset(seu, type %in% c("Fibroblast", "Epithelial"))
+
+Idents(seu)="type"
+
+
+cnv=Wrapper_inferCNV(seu,ref_group= "Fibroblast",outputPath=cnvDir, analysis_mode="samples",HMM_type="i3", gene_annot = gene_annot) 
+
+
+Wrapper_inferCNV= function( SeurObj,ref_group,outputPath, analysis_mode,HMM_type, gene_annot){
+  
+  message("Creation of the annotation object")
+  
+  #stopifnot( (str(type) %in% colnames(SeurObj@meta.data) ))
+  
+  annotation <- as.data.frame(SeurObj$type) %>% rownames_to_column() 
+  rownames(annotation)= make.unique(annotation[,1])
+ n <-rownames(annotation)
+ annotation=as.data.frame(annotation[,-1], row.names = n); rm(n)
+ names(annotation)=NULL
+ 
+ counts_matrix <- as.matrix(SeurObj@assays$RNA@counts[,colnames(SeurObj)]) 
+ 
+ message("Creation of the inferCNV object")
+ 
+ cnv_Obj <-CreateInfercnvObject(counts_matrix, gene_order_file=gene_annot, annotations_file=annotation,
+  max_cells_per_group = NULL,
+  min_max_counts_per_cell = NULL,ref_group_names= ref_group)
+ 
+ message("Running inferCNV is starting" )
+ 
+ infercnv <- infercnv::run(
+    cnv_Obj,
+    min_cells_per_gene = 50,
+    cutoff=0.1, # cutoff=1 works well for Smart-seq2, and cutoff=0.1 works well for 10x Genomics
+    out_dir=outputPath,
+    cluster_references = FALSE,
+    cluster_by_groups=TRUE, 
+    denoise=TRUE,
+    HMM=FALSE,
+    analysis_mode = analysis_mode,
+    no_prelim_plot=FALSE,
+    png_res=500,
+   plot_steps=F,num_threads=1, HMM_type= HMM_type, tumor_subcluster_partition_method="leiden",save_final_rds=TRUE)
+ 
+  message( "Adding the inferCNV output to the Seurat obj")
+  
+ SeurObj=add_to_seurat(
+  seurat_obj = SeurObj,
+  infercnv_output_path = outputPath,
+  top_n = 50,
+  bp_tolerance = 2e+06)
+ 
+ return(SeurObj)
+}
+```
+
+
+```{r}
+obs3=read.table(file.path(cnvDir,"/infercnv.observations.txt")) %>% as.matrix()
+colnames(obs3) = gsub("[.]1","-1", colnames(obs3))
+
+lowthr <- quantile(obs3,0.05) #0.9120466 
+highthr <- quantile(obs3,0.95)# 1.090948
+
+tlg <- obs3 %>% as.data.frame() %>% mutate(across(everything(), ~  ifelse(. <=  lowthr, -1, ifelse(. >=  highthr, 1, 0)))) %>% abs()
+
+x= tlg %>% reshape2::melt() %>% dplyr::filter(value==1)
+x=as.data.frame.matrix(table(x$variable, x$value))
+colnames(x)= "alt"
+x= apply(x,2, function(u){round(u/nrow(tlg), 3)} ) %>% as.data.frame()
+x$cell <- rownames(x)
+```
+
+```{r}
+ref3=read.table(file.path(cnvDir,"/infercnv.references.txt")) %>% as.matrix()
+colnames(ref3) = gsub("[.]1","-1", colnames(ref3))
+
+tlgr <- ref3 %>% as.data.frame() %>% mutate(across(everything(), ~  ifelse(. <=  lowthr, -1, ifelse(. >=  highthr, 1, 0)))) %>% abs()
+####
+
+xr= tlgr %>% reshape2::melt() %>% dplyr::filter(value==1)
+xr=as.data.frame.matrix(table(xr$variable, xr$value))
+colnames(xr)= "alt"
+xr= apply(xr,2, function(u){round(u/nrow(tlgr), 3)} ) %>% as.data.frame()
+xr$cell <- rownames(xr)
+
+m= rbind(x, xr)
+qs::qsave(m, file.path(cnvDir, "Combination_Alterations_Juxta_RefFibroblast.qs"))
+```
+
+```{r}
+
+length(intersect(m$cell, colnames(epith)))
+
+m=m %>% dplyr::filter(cell %in% colnames(epith))
+
+m= m[match(colnames(maya), m$cell),]
+stopifnot(identical(m$cell,colnames(epith)))
+
+epith$altered_Genome <- m$alt
+
+qs::qsave(epith, file.path(RDatadir,"Epithelial_MAYA_All.qs"))
+```
+
+Vln plot of alterations
+```{r}
+pdf(file.path(figDir,"VlnPlot_AlteredGenome_Epith_refFibro.pdf"))
+p <- VlnPlot(epith, features = "altered_Genome", group.by = "ClustH_dendro" ,pt.size = 0, cols = epith_cols)+ stat_summary(fun= median, geom='point', size = 8, colour = "white", shape = 95, show.legend = F) + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "C3",aes(label=..p.adj..)) + NoLegend()
+print(p)
+dev.off()
+
+
+pdf(file.path(figDir,"VlnPlot_AlteredGenome_Epith_refFibro_SplitCNV.pdf"))
+p <- VlnPlot(epith, features = "altered_Genome", group.by = "ClustH_dendro",split.by = "BRCA" ,pt.size = 0, cols = colBRCA)+ stat_summary(fun= median, geom='point', size = 8, colour = "white", shape = 95, show.legend = F)  + NoLegend()
+print(p)
+dev.off()
+```
+
+check quantiles of altered cells
+
+```{r}
+epith$class=paste0(epith$ClustH_dendro,"_",epith$BRCA)
+dt=data.frame("class"= epith$class, "alt"=epith$altered_Genome)
+dt2=aggregate(dt[,-1], by=list(dt$class), median) %>% as.data.frame()
+colnames(dt2)= c("sample", "median")
+dt3=aggregate(dt[,-1], by=list(dt$class), FUN = function(i) quantile(i, probs = 0.9, na.rm = T)) %>% as.data.frame()
+colnames(dt3)= c("sample", "90qtl")
+
+dt4=cbind(dt2, dt3)
+```
+
+PLOT THE UMAP:
+
+
+```{r}
+mat=new_umap$layout %>% as.data.frame()
+identical(rownames(mat), colnames(epith))
+
+mat$altered_Genome=epith$altered_Genome
+ p <- mat %>% ggplot( aes(x =V1, y = V2,fill=  altered_Genome ))+ geom_point(size = 2, stroke=0.8, shape = 21) + theme_classic() + scale_fill_viridis(option="B",na.value= "grey",alpha=1,limits = c(0.05, 0.4),direction=-1)+ NoAxes() + NoLegend()
+ 
+ png(paste0(figDir,"/Fig_Umap_EPITH_AlteredGenomeNEWUMAP_0.4.png"),height=2000, width = 2000,res=300)
+ print(p)
+ dev.off()
+```
