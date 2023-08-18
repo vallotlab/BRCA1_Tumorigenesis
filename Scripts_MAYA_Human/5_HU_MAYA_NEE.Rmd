@@ -1,0 +1,486 @@
+---
+title: "5_HU_MAYA_NEE"
+author: "Melissa"
+date: "17/08/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+inputDir="C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/input/human/PublicData/Kassenbrok_GSE174588/"
+outputDir= "C:/Users/Melissa S/Desktop/PROJECTS/Brca1_Tumorigenesis/REVIEW/output/human/public_data/NEE"
+
+##
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+
+figDir= file.path(outputDir, "Figures") ; if(!file.exists(annotDir)){dir.create(annotDir)}
+cnvDir= file.path(outputDir, "CNV") ; if(!file.exists(cnvDir)){dir.create(cnvDir)}
+```
+
+Upload the data
+```{r}
+samplename= qdapRegex::ex_between(list.files(inputDir), "scRNA_", "_matrix")%>% unlist()
+sn=list.files(inputDir)
+
+for(i in seq_len(length(samplename))){
+  assign(samplename[i], Matrix::as.matrix(read.table(paste0(inputDir, "/", sn[i]), header = TRUE), "sparse"))
+}
+
+assign(samplename[21], Matrix::as.matrix(read.table(paste0(inputDir, "/", sn[21]), header = TRUE), "sparse"))
+assign(samplename[22], Matrix::as.matrix(read.table(paste0(inputDir, "/", sn[22]), header = TRUE), "sparse"))
+
+l=mget(samplename)
+
+qs::qsave(l, file.path(RDatadir, "Kassenbrock_Matrices.qs"))
+
+for(i in seq_len(length(l))){
+ assign(paste0("s_", names(l)[i]), CreateSeuratObject(l[[i]], project = names(l)[i], min.cells = 50, min.features = 50))
+  
+}
+
+slist=mget(paste0("s_", names(l)))
+qs::qsave(slist, file.path(RDatadir, "Raw_Kassenbrock_SeuratList.qs"))
+slist=qs::qread(file.path(RDatadir, "Raw_Kassenbrock_SeuratList.qs"))
+
+
+for(i in seq(1:length(slist))){
+  slist[[i]]$orig.ident= names(slist)[i]
+  slist[[i]][["percent.mito"]] <- PercentageFeatureSet(slist[[i]], pattern = "^MT-")
+}
+
+```
+
+
+```{r}
+features= c("nCount_RNA", "nFeature_RNA", "percent.mito")
+ pdf(paste0(annotDir, "/VlnPlot_Samples_BeforeQC.pdf") 
+   , height = 8, width = 8)
+ for(i in seq(1,length(slist))){
+p=VlnPlot(slist[[i]], features= features, group.by = "orig.ident") + ggtitle(names(slist)[i])
+print(p)
+ }
+ dev.off()
+ 
+ seu=merge(slist[[1]], slist[2:length(slist)])
+
+ 
+    seu<- subset(seu, nFeature_RNA < 4000 & nFeature_RNA > 1000 
+                            & nCount_RNA < 50000  & nCount_RNA > 500
+                                  & percent.mito < 20)
+  
+ seu= seu %>% NormalizeData() %>% FindVariableFeatures() %>% ScaleData()  %>% RunPCA(., npcs = 60)  %>% RunUMAP(., reduction= "pca", dims= 1:60 ) %>% FindNeighbors(., reduction = "pca", dims = 1:60) %>% FindClusters(., resolution = 1.2)
+ 
+      qs::qsave(seu, file.path(RDatadir, "Raw_Seurat.qs"))
+ seu=qs::qread(file.path(RDatadir, "Raw_Seurat.qs"))
+ 
+```
+
+Create a subset of the data :
+```{r}
+Idents(seu)="seurat_clusters"
+kai= subset(seu, seurat_clusters %in% c(2,3,28,28,17,27,38,10,30,12,18,29,4,24,34,11))
+
+
+df_all_count= kai@assays$RNA@counts
+library(MAYA)
+memory.limit(size= 100000)
+#MAYA on hallmark
+activity_summary_all<-MAYA_pathway_analysis(expr_mat=df_all_count,
+                                        modules_list = "hallmark",
+                                        is_logcpm=F,min_cells_pct = 0.0)
+```
+
+
+```{r}
+kai$custom_type= ifelse(kai$seurat_clusters %in% c(2,3,17,28,38,27,10), "Basal", ifelse(kai$seurat_clusters %in% c(30,18,12,29), "LP", "ML"))
+
+
+col=c("LP"= "#F27ECB","ML"= "#F0BDED" , "Basal"= "#D8B2ED")
+
+
+umap_custom <- as.data.frame(activity_summary_all$umap$layout)
+colnames(umap_custom)= c("UMAP_1","UMAP_2")
+
+metada_cells_col <- col[match(kai$custom_type,names(col))]
+draw <- sample(1:dim(umap_custom)[1])
+
+
+png(paste0(figDir,"/Fig_KAI_Umap_EPITH_Batch1_TYPE.png"),height=2000, width = 2000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2.5, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + NoLegend() + NoAxes()
+print(p)
+dev.off()
+
+meta_all=kai@meta.data
+meta_all$histology= gsub("[0-9]$", "", meta_all$orig.ident)
+meta_all$histology= gsub("[0-9]$", "", meta_all$histology)
+
+
+col=c("s_brca"="darkgreen", "s_ctrl"="grey")
+umap_custom <- as.data.frame(activity_summary_all$umap$layout)
+colnames(umap_custom)= c("UMAP_1","UMAP_2")
+
+metada_cells_col <- col[match(meta_all$histology,names(col))]
+draw <- sample(1:dim(umap_custom)[1])
+
+
+png(paste0(RDatadir,"/Fig_KAI_Umap_EPITH_Batch1__BRCA.png"),height=2000, width = 2000,res=300)
+p <- ggplot(umap_custom[draw,], aes(x =UMAP_1, y = UMAP_2 ))+ geom_point(size = 2.5, shape = 21,fill = metada_cells_col[draw],alpha=1) + theme_classic() + NoLegend() + NoAxes()
+print(p)
+dev.off()
+```
+
+
+
+```{r}
+mat= activity_summary_all$umap$layout 
+colnames(mat)=c("UMAPM_1", "UMAPM_2")
+
+kai[['umap']] <- CreateDimReducObject(embeddings = mat, key = 'UMAPM_', assay = 'RNA')
+```
+
+check cell correlation:
+```{r}
+kai$histology= gsub("[0-9]$", "",kai$orig.ident)
+kai$histology= gsub("[0-9]$", "", kai$histology)
+
+kai$category= paste0(kai$custom_type, "_", kai$histology)
+```
+
+```{r}
+flattenCorrMatrix <- function(cormat, pmat) {
+               ut <- upper.tri(cormat)
+               data.frame(
+               row = rownames(cormat)[row(cormat)[ut]],
+               column = rownames(cormat)[col(cormat)[ut]],
+               cor  =(cormat)[ut],
+               p = pmat[ut]
+               )
+}
+
+
+
+c1=subset(kai,  category=="Basal_s_ctrl")
+mat_c1= c1@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c1))
+tmp <- flattenCorrMatrix(res$r, res$P)
+tmp$clust="Normal_Basal"
+
+
+c2=subset(kai,  category=="LP_s_ctrl")
+mat_c1= c2@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c1))
+tmp2 <- flattenCorrMatrix(res$r, res$P)
+tmp2$clust="Normal_LP"
+
+
+c3=subset(kai,  category=="ML_s_ctrl")
+mat_c3= c3@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c3))
+tmp3 <- flattenCorrMatrix(res$r, res$P)
+tmp3$clust="Normal_ML"
+
+c4=subset(kai,  category=="LP_s_brca")
+mat_c4= c4@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c4))
+tmp4 <- flattenCorrMatrix(res$r, res$P)
+tmp4$clust="Mut_LP"
+
+
+
+c5=subset(kai,  category=="Basal_s_brca")
+mat_c5= c5@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c5))
+tmp5 <- flattenCorrMatrix(res$r, res$P)
+tmp5$clust="Mut_Basal"
+
+
+c6=subset(kai,  category=="ML_s_brca" )
+mat_c6= c6@assays$RNA@data
+library(Hmisc)
+res<-rcorr(as.matrix(mat_c6))
+tmp6 <- flattenCorrMatrix(res$r, res$P)
+tmp6$clust="Mut_ML"
+
+
+datcor=list(  "Normal_Basal"=tmp$cor, "Mut_Basal"=tmp5$cor, "Normal_LP"= tmp2$cor, "Mut_LP"= tmp4$cor,
+"Normal_ML"= tmp3$cor, "Mut_ML"= tmp6$cor)       
+
+res2 <- as.data.frame(do.call(cbind, datcor)) 
+
+qs::qsave(res2, file.path(RDatadir,"PairwiseCorr_Epith_Conditions_Kassenbrock_Batch1.qs"))
+res2= qs::qread(file.path(RDatadir,"PairwiseCorr_Epith_Conditions_Kassenbrock_Batch1.qs"))
+
+memory.limit(size= 1000000)
+pdf(file.path(figDir,"KAISSENBROCK_IntraCorr_EpithType_Condition.pdf"))
+p <-  res2 %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable, fill= variable), show.legend = F) + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = variable, y = value)) + ylab("pairwise_IntraClust_Correlation") + themplot #+ scale_color_manual(values=epith_cols) + scale_fill_manual(values=epith_cols)
+  print(p)
+dev.off()
+
+dt4=res2[,1:2] %>%  reshape2::melt()
+
+tb=pairwise.wilcox.test(dt4$value, dt4$variable, p.adjust.method = "bonf")
+
+median(res2$Mut_Basal)/median(res2$Normal_Basal)
+
+median(res2$Mut_LP)/median(res2$Normal_LP)
+
+median(res2$Mut_ML)/median(res2$Normal_ML)
+```
+
+
+```{r}
+d1= res2[sample(seq(1,145189320), 1000000),]
+qs::qsave(d1, file.path(RDatadir,"PairwiseCorr_Epith_Conditions_Kassenbrock_Batch1_Only1M.qs"))
+
+memory.limit(size= 1000000)
+pdf(file.path(figDir,"KAISSENBROCK_IntraCorr_EpithType_Condition.pdf"))
+p <-  d1 %>%  reshape2::melt() %>%  ggplot() + 
+  geom_violin(aes(x = variable, y = value, col= variable, fill= variable), show.legend = F) + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95,aes(x = variable, y = value)) + ylab("pairwise_IntraClust_Correlation") + themplot #+ scale_color_manual(values=epith_cols) + scale_fill_manual(values=epith_cols)
+  print(p)
+dev.off()
+```
+
+
+prepare for inferCNV:
+```{r}
+selection <- sample(rownames(seu@meta.data[which(seu@meta.data$seurat_clusters %in% c(6,20)),]),5000)
+
+
+sub_meta <- meta_all[rownames(meta_all) %in% c(selection, colnames(kai)),]
+
+###########
+#stroma= rownames(meta_all[meta_all$MAYA_annotP =="Stromal cells",])
+#stroma=sample(stroma, 5000)
+#meta_stroma <- meta_all[rownames(meta_all) %in% stroma,]
+#take normal cells as the reference:
+
+df <- df_all_count[,rownames(sub_meta)]
+sub_meta$custom_type=ifelse(colnames(df) %in% colnames(kai), kai$custom_type, "Stroma")
+
+#meta <- rbind(sub_meta,meta_stroma)
+```
+```{r}
+infer=CreateSeuratObject(counts=df)
+infer=AddMetaData(infer, metadata = sub_meta)
+
+qs::qsave(infer, file.path(RDatadir, "InferCNV_seu_RawEpith_EpithStroma.qs"))
+
+infer=qs::qread(file.path(RDatadir, "InferCNV_seu_RawEpith_EpithStroma.qs"))
+infer=subset(infer, histology %in% c("s_brca", "s_ctrl" ) )
+
+set.seed(123)
+bsl= sample(rownames(infer@meta.data[which(infer@meta.data$custom_type=="Basal"),]), 1000)
+stroma= sample(rownames(infer@meta.data[which(infer@meta.data$custom_type=="Stroma"),]), 1000)
+ml= sample(rownames(infer@meta.data[which(infer@meta.data$custom_type=="ML"),]), 2000)
+lp= rownames(infer@meta.data[which(infer@meta.data$custom_type=="LP"),])
+
+cells= c(bsl, stroma, ml,lp )
+seu= subset(infer, cells = cells)
+```
+
+run infer CNV:
+
+```{r}
+memory.limit(size= 100000)
+Sys.setenv(JAGS_HOME="C:\\Program Files\\JAGS\\JAGS-4.3.0")
+library(tidyverse)
+library("rjags")
+library(infercnv)
+library(ChromSCape)
+data("hg38.GeneTSS")
+gene_annot = hg38.GeneTSS[,c(4,1,2,3)]
+colnames(gene_annot) = NULL
+rownames(gene_annot)= gene_annot[,1]
+gene_annot=gene_annot[,c(2:4)]
+gc()
+#########################
+SeurObj=seu
+
+
+Wrapper_inferCNV= function( SeurObj,ref_group,outputPath, analysis_mode,HMM_type, gene_annot){
+  
+  message("Creation of the annotation object")
+  
+  #stopifnot( (str(type) %in% colnames(SeurObj@meta.data) ))
+  
+  annotation <- as.data.frame(SeurObj$subtype) %>% rownames_to_column() 
+  rownames(annotation)= make.unique(annotation[,1])
+ n <-rownames(annotation)
+ annotation=as.data.frame(annotation[,-1], row.names = n); rm(n)
+ names(annotation)=NULL
+ 
+ gc()
+ counts_matrix <- as(SeurObj@assays$RNA@counts[,colnames(SeurObj)], "sparseMatrix")  
+
+ gc()
+ message("Creation of the inferCNV object")
+ 
+ gc()
+ ref_group="Endothelial"
+ 
+ cnv_Obj <-CreateInfercnvObject(counts_matrix, gene_order_file=gene_annot, annotations_file=annotation,
+  max_cells_per_group = NULL,
+  min_max_counts_per_cell = NULL,ref_group_names= ref_group)
+ 
+ qs::qsave( cnv_Obj, file.path(figDir, "CNVobj_Pal.qs"))
+ 
+ 
+ rm( counts_matrix)
+ gc()
+ memory.limit(size= 1000000)
+ message("Running inferCNV is starting" )
+ 
+ infercnv <- infercnv::run(
+    cnv_Obj,
+    min_cells_per_gene = 300,
+    cutoff=0.1, # cutoff=1 works well for Smart-seq2, and cutoff=0.1 works well for 10x Genomics
+    out_dir=outputPath,
+    cluster_references = FALSE,
+    cluster_by_groups=FALSE, 
+    denoise=TRUE,
+    HMM=FALSE,
+    analysis_mode = analysis_mode,
+    no_prelim_plot=FALSE,
+    png_res=500,
+   plot_steps=F,num_threads=1, HMM_type= HMM_type, tumor_subcluster_partition_method="leiden",save_final_rds=TRUE, plot_probabilities=F)
+
+ 
+ return( infercnv )
+}
+```
+
+
+
+CNV inference:
+```{r}
+Idents(seu)="custom_type"
+
+qs::qsave(cnv_Obj, file.path("C:/Users/Melissa S/Desktop_CnvObj_Kassenbrock.qs"))
+
+cnv=Wrapper_inferCNV(seu,ref_group= "Stroma",outputPath=cnvDir, analysis_mode="samples",HMM_type="i3", gene_annot = gene_annot) 
+
+
+```
+
+```{r}
+infer=qs::qread(file.path(RDatadir, "InferCNV_seu_RawEpith_OnlyLumEpith.qs"))
+infee=subset(infer, histology %in% c("s_brca", "s_ctrl" ) )
+```
+
+###
+```{r}
+cells= c(bsl, ml,lp )
+seu= subset(infer, cells = cells)
+sseu= subset(seu, custom_type %in% c("ML","LP","Basal"  ))
+
+cnv_Kassen=qs::qread(file.path(cnvDir,"CNVcellskASSENBROCK.qs"))
+
+cnv_Kassen=cnv_Kassen %>% dplyr::filter(cell %in% colnames(sseu))
+
+sseu= subset(sseu, cells= cnv_Kassen$cell)
+identical(colnames(sseu), cnv_Kassen$cell)
+
+#cnv_Kassen=cnv_Kassen[colnames(seu),]
+sseu$alteredGenome=cnv_Kassen$alt
+
+qs::qsave(sseu, file.path(cnvDir, "Test_Kassen_CNV_Seurat.qs"))
+
+
+p=VlnPlot(sseu, features = "alteredGenome", group.by = "custom_type", split.by= "histology", cols =c("s_brca"="darkgreen", "s_ctrl"="grey"), pt.size = 0) + NoLegend() + 
+  stat_summary(fun= median.stat, geom='point', size = 3, colour = "black", shape = 95)
+
+da= data.frame("custom_type"= sseu$class, "alteredGenome"= sseu$alteredGenome)
+
+p=da %>% reshape2::melt() %>% ggplot(aes(x= custom_type, y= value )) + geom_violin() + 
+  stat_summary(fun= median, geom='point', size = 3, colour = "black", shape = 95)+ themplot + scale_fill_manual(values=c("Basal_s_ctrl"=))
+
+
+pdf(file.path(figDir,"VlnPlot_Kassenbrock_Redo_CNV.pdf"))
+print(p)
+dev.off()
+```
+
+
+```{r}
+sseu$class=paste0(sseu$custom_type, "_", sseu$histology)
+
+dt=data.frame("class"= sseu$class, "alt"=sseu$alteredGenome)
+dt2=aggregate(dt[,-1], by=list(dt$class), median) %>% as.data.frame()
+
+dt3=aggregate(dt[,-1], by=list(dt$class), FUN = function(i) quantile(i, probs = 0.9, na.rm = T)) %>% as.data.frame()
+pairwise.wilcox.test(dt$alt, dt$class)
+
+colnames(dt2)= c("sample", "median")
+colnames(dt3)= c("sample", "qtl90")
+dt4=cbind(dt2, dt3)
+```
+
+
+test the percentage of alterations 
+```{r}
+
+
+#juxta:
+alt2= length(which(subset(epith, ClustH_dendro=="1")$altered_Genome > 0.2))/ ncol(subset(epith, ClustH_dendro=="1")) #0.09357201
+
+#Kassenbrock:
+alt3= length(which(subset(sseu, custom_type=="LP")$alteredGenome > 0.2))/ ncol(subset(sseu, custom_type=="LP")) #0.01546288
+
+#PAL:
+lp=mat[,cnvo@observation_grouped_cell_indices$N_LP] %>% colnames()
+altpal=altpal[which(altpal$cell %in% lp),]
+
+alt4= length(which(altpal$alt > 0.2))/ nrow(altpal) #0.01778149
+
+#----------------------------------------------------------##
+ altpal=altpal[which(altpal$cell %in% lp),]
+ ####
+ altkass= as.data.frame(subset(sseu, custom_type=="LP")$alteredGenome)
+ altkass$cell=rownames(altkass)
+ colnames(altkass)= c("alt","cell")
+ ####
+  altju= as.data.frame(subset(epith, ClustH_dendro %in% c("1", "3"))$altered_Genome)
+ altju$cell=rownames(altju)
+ colnames(altju)= c("alt","cell")
+ ####
+   altG= as.data.frame(subset(gpro, cluster %in% c("C1", "C3"))$alt)
+ altG$cell=rownames(altG)
+ colnames(altG)= c("alt","cell")
+#----------------------------------------------------------------##
+altpal$type="Pal"
+altkass$type="Kai"
+altju$type="Juxta"
+altG$type="Gpro"
+ 
+df= rbind(altpal, altkass, altju, altG)
+qs::qsave(df, file.path(figDir, "Df_LP_Alterations_4datasets_Human.qs"))
+
+p=df %>% ggplot(aes(x=type, y=alt))+ geom_boxplot() + themplot  + stat_compare_means(label = "p.signif", method = "wilcox.test", ref.group = "Gpro",aes(label=..p.adj..))
+
+library(ggpubr)
+library(rstatix)
+
+d=reshape2::melt(df)
+
+
+
+stat.test <- d  %>%
+  wilcox_test(formula= value ~ as.factor(type)) %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance("p.adj") #%>%
+  #group_by(type)
+stat.test
+```
+
+
