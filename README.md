@@ -104,7 +104,8 @@ The output folder contains the figures, Rdata files, output from the scripts. Si
 │   ├── 1_HU_MAYA_ALL.Rmd
 │   ├── 2_HU_MAYA_EPITHELIAL.Rmd
 │   ├── 3_HU_CNV.Rmd
-│   └── 4_HU_MAYA_PAL.Rmd
+│   ├── 4_HU_MAYA_PAL.Rmd
+    └── 5_HU_MAYA_NEE.Rmd
 ```
 
 
