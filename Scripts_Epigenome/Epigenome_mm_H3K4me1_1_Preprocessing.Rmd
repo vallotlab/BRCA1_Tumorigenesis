@@ -1,0 +1,320 @@
+---
+title: "Epigenome_mm_H3K4me1_1_Preprocessing"
+author: "Melissa"
+date: "2025-01-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+archrDir="/Users/msaichi/Desktop/PROJECTS/epigenome_mm10_K4me1"
+outputDir <- file.path(archrDir,"Figures_Epigenome") ; if(!file.exists(outputDir)){dir.create(outputDir)}
+
+mainDir=here::here() #C:/Users/Melissa S/Desktop/PROJECTS/Spatial_Transcriptomics/MERFISH
+inputDir= file.path(mainDir,"input", "mouse","snH3K4me1","Fragment_Files")
+outputDir= file.path(mainDir,"output","mouse","snH3K4me1")
+
+RDataDir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+figDir= file.path(outputDir, "Figures") ; if(!file.exists(figDir)){dir.create(figDir)}
+
+
+```
+
+```{r}
+cols_hist=c("GCreP"="#1CAC78","CreN"= "#686D76", "CCI"="#A67B5B")
+col_type=c("Basal"= "#a29cd5","LP"="#d96685", "H-S"="#f1c8cf","Tumor"= "#A67B5B", "Fibroblast2"="#94C6F7","Fibroblast3"= "#DEEFF7", "Fibroblast"= "#628ab8","Immune"= "#F2EBB1","Endothelial"= "#c09a17","Immune_Myeloid"=  "#C8C689" )
+col_samples=c("#686D76","#50B498","#658147","#90D26D","#059212", "#A67B5B") #"#808836",
+names(col_samples)= table(proj_20k$histology) %>% names()
+```
+
+
+
+```{r}
+library(ggExtra)
+library(cowplot)
+library(ggplot2)
+library(Seurat)
+library(SingleCellExperiment)
+library(ChromSCape)
+library(ArchR)
+```
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+```{r}
+downstream=function(proj){
+  proj <- addIterativeLSI(
+    ArchRProj = proj,
+    useMatrix = "TileMatrix", 
+    name = "IterativeLSI", 
+    outlierQuantiles = c(0.05, 0.95),
+    varFeatures = 30000,
+    iterations = 5, #Increase it
+    clusterParams = list( #See Seurat::FindClusters
+        resolution = c(0.8), 
+        n.start = 10 ),
+     LSIMethod=2,corCutOff = 0.8,excludeChr=c("chrM", "chrY"),UMAPParams = list(n_neighbors = 30, min_dist = 0.3, metric = "cosine", verbose =
+    FALSE, fast_sgd = TRUE), threads = 1, force = TRUE, filterQuantile = 0.99)
+
+
+proj <- addClusters(input = proj, force = T, reducedDims = "IterativeLSI", nOutlier=2)
+proj <- addUMAP(ArchRProj = proj, force = T, reducedDims = "IterativeLSI",nNeighbors = 40)
+return(proj)}
+```
+
+```{r}
+downstream2=function(proj){
+  proj <- addIterativeLSI(
+    ArchRProj = proj,
+    useMatrix = "PeakMatrix", 
+    name = "pIterativeLSI", 
+    outlierQuantiles = c(0.05, 0.95),
+    varFeatures = 30000,
+    iterations = 5, #Increase it
+    clusterParams = list( #See Seurat::FindClusters
+        resolution = c(0.8), 
+        n.start = 10 ),
+     LSIMethod=2,corCutOff = 0.8,excludeChr=c("chrM", "chrY"),UMAPParams = list(n_neighbors = 30, min_dist = 0.3, metric = "cosine", verbose =
+    FALSE, fast_sgd = TRUE), threads = 1, force = TRUE, filterQuantile = 0.99)
+proj <- addClusters(input = proj, force = T, reducedDims = "pIterativeLSI", nOutlier=2, name = "pClusters")
+proj <- addUMAP(ArchRProj = proj, force = T, reducedDims = "pIterativeLSI",nNeighbors = 40, name="pUMAP")
+return(proj)}
+```
+
+```{r}
+library(ArchR)
+# Read in Fragment Files
+Fragment_files = list.files(inputDir, pattern = "*tsv.gz", full.names = TRUE)
+Fragment_files = Fragment_files[grep("fragments.tsv.gz$", Fragment_files)]
+#Fragment_files = Fragment_files[grep("H3K4me1", Fragment_files)]
+
+#Fragment_files=Fragment_files[-4] #remove the previous CreN
+
+names(Fragment_files) = gsub(".fragments.tsv.gz","", basename(Fragment_files))
+names(Fragment_files) = gsub("_flagged_rmPCR_RT","", names(Fragment_files))
+names(Fragment_files)= gsub("_H3K4me1", "",names(Fragment_files))
+
+names(Fragment_files)=gsub("D1377H05_rBC1", "CreN_1", names(Fragment_files))
+```
+
+```{r}
+# Create Arrow Files
+setwd(archrDir)
+addArchRGenome("mm10")
+
+ArrowFiles <- createArrowFiles(
+  inputFiles = Fragment_files,  
+  sampleNames = names(Fragment_files),
+  outputNames = names(Fragment_files),
+  minFrags = 100,
+  maxFrags = 3000,
+  minTSS = 0,
+  nucLength = 50,
+  maxFragSize = 5000,
+  TileMatParams = list(tileSize = 20000, binarize = FALSE),
+  addTileMat = TRUE,
+  addGeneScoreMat = TRUE,
+  force = TRUE, 
+  subThreading = FALSE,threads = 1,excludeChr = c("chrM", "chrY"))
+
+
+getwd()
+
+ArrowFiles = list.files(archrDir, full.names = TRUE) 
+ArrowFiles= grep(".arrow", ArrowFiles, value = TRUE) 
+# Create ArchR project
+archrDir=outputDir
+proj_20k <- ArchRProject(
+  ArrowFiles = ArrowFiles[c(1,2,3,5:7)],
+  outputDirectory = archrDir,
+  copyArrows = FALSE)
+
+writexl::write_xlsx(as.data.frame(table(proj_20k$Sample)), file.path(RDataDir, "Raw_NbrCells_20k_100_3k.xlsx"))
+#proj_20k=qs::qread("C:/Users/Melissa S/Desktop/PROJECTS/SC_EPIGENOMES/scEpigenome_Tumorigenesis/output/RData_H3k4_V3/proj_20k_initial.qs")
+
+proj_20k <- addDoubletScores(
+    input = proj_20k,
+    k = 10, #Refers to how many cells near a "pseudo-doublet" to count.
+    knnMethod = "UMAP", #Refers to the embedding to use for nearest neighbor search with doublet projection.
+    LSIMethod = 1, logFile = createLogFile("addDoubletScores"),nTrials = 10, UMAPParams = list(n_neighbors = 20, min_dist = 0.4, metric = "cosine", verbose =FALSE),corCutOff = 0.8, force=TRUE )
+
+##Create a new object without doublets:
+proj_20k$isDoublet= ifelse(proj_20k$DoubletEnrichment <  quantile(proj_20k$DoubletEnrichment ,0.99), "NoDoublet", "Doublet")
+d=as.data.frame.matrix(table(proj_20k$Sample, proj_20k$isDoublet))
+d$sample= rownames(d)
+writexl::write_xlsx(d, file.path(RDataDir, "Table_sample_Doublet_20k.xlsx"))
+```
+
+```{r}
+proj_20k$sample= gsub("_mm_.*","", proj_20k$Sample)
+proj_20k$histology= proj_20k$sample
+proj_20k$histology=dplyr::recode(proj_20k$histology, "J_7584"="creP_1","J_7583"="creP_2","T_7879"="Tumor", "G_7797_J7789_7790"= "creP_3", "C_7412"=  "creP_4")
+
+cols_histology=c("#508D4E","#729762",)
+```
+
+```{r}
+proj_20k$hist= proj_20k$histology
+proj_20k$hist= dplyr::recode(proj_20k$hist,"creP_4"="GCreP", "creN_2"="CreN", "creP_3"="GCreP", "CreN_1"="CreN", "creP_2"="GCreP", "creP_1"="GCreP", "Tumor"="CCI")
+proj_20k$hist= factor(proj_20k$hist, levels=c("CCI", "GCreP", "CreN"))
+```
+
+```{r}
+#cells= unique(c(rownames(proj_20k@cellColData)[-which(proj_20k$isDoublet== "Doublet" )],rownames(proj_20k@cellColData)[-which(proj_20k$nFrags > 2000)]))
+
+cells= rownames(proj_20k@cellColData)[-which(proj_20k$isDoublet== "Doublet" )]
+#Remove cell annotated as doublets:
+proj_20k= subsetArchRProject(
+  ArchRProj = proj_20k,
+  cells = cells,
+  outputDirectory = "keptCells",
+  dropCells = TRUE,
+  logFile = NULL,
+  threads = 1,
+  force = TRUE)
+
+proj_20k <- downstream(proj_20k)
+
+#####
+proj_20k= subsetArchRProject(
+  ArchRProj = proj_20k,
+  cells = rownames(proj_20k@cellColData)[-which(proj_20k$Clusters %in% c("C1","C8","C9","C15"))],
+  outputDirectory = "keptCells",
+  dropCells = TRUE,
+  logFile = NULL,
+  threads = 1,
+  force = TRUE)
+
+proj_20k <- downstream(proj_20k)
+```
+
+call peaks:
+```{r}
+proj_20k=addGroupCoverages(proj_20k, groupBy = "sample",force = TRUE)
+proj_20k=  addReproduciblePeakSet(
+    ArchRProj = proj_20k, 
+    groupBy = "sample", 
+    pathToMacs2 = "/opt/miniconda3/envs/macs3/bin/macs3",peaksPerCell = 20000, minCells = 50,extendSummits = 500,reproducibility ="5",force = TRUE,maxPeaks = 150000,peakMethod = "Macs2") #"--keep-dup all","--nolambda",
+
+proj_20k <- addPeakMatrix(proj_20k)
+saveArchRProject(ArchRProj = proj_20k, outputDirectory = "keptCells", load = FALSE)
+
+
+dt= data.frame("hist"=proj_20k$hist, "frip"= proj_20k$FRIP )
+dt$hist=factor(dt$hist, levels= c("CreN","GCreP","CCI"))
+
+p=dt %>% ggplot(aes(x=hist, y= frip, fill=hist)) + geom_violin() + themplot + scale_fill_manual(values=cols_hist) + NoLegend() + stat_summary(fun.y=mean, geom="point", size=2, color="white") + ylim(0, 1)
+
+pdf(file.path(figDir, "Vln_FRIP_Histology.pdf"))
+print(p)
+dev.off()
+###
+
+dt= data.frame("hist"=proj_20k$histology, "rip"= proj_20k$FRIP)
+p=dt %>% ggplot(aes(x=hist, y= rip, fill=hist)) + geom_violin() + themplot + scale_fill_manual(values=col_samples) + NoLegend() + stat_summary(fun.y=mean, geom="point", size=2, color="white")+ ylim(0, 1)
+
+pdf(file.path(figDir, "Boxplot_FRIP_samples.pdf"))
+print(p)
+dev.off()
+```
+
+```{r}
+saveArchRProject(ArchRProj = proj_20k, outputDirectory = "keptCells", load = FALSE)
+proj_20k=loadArchRProject("keptCells")
+```
+
+
+Supp plot:
+```{r}
+dt= data.frame("hist"=proj_20k$histology, "nFrags"= proj_20k$nFrags )
+p=dt %>% ggplot(aes(x=hist, y= nFrags, fill=hist)) + geom_violin() + themplot + scale_fill_manual(values=col_samples) + NoLegend() + stat_summary(fun.y=mean, geom="point", size=2, color="white")
+
+pdf(file.path(figDir, "Vln_nFrags_sample_WO_creN1.pdf"))
+print(p)
+dev.off()
+####
+
+
+dt= data.frame("hist"=proj_20k$hist, "nFrags"= proj_20k$nFrags )
+p=dt %>% ggplot(aes(x=hist, y= nFrags, fill=hist)) + geom_violin() + themplot + scale_fill_manual(values=cols_hist) + NoLegend() + stat_summary(fun.y=mean, geom="point", size=2, color="white")
+
+
+pdf(file.path(figDir, "Vln_nFrags_Hist.pdf"))
+print(p)
+dev.off()
+```
+
+Perform annotation:
+```{r}
+markersGS <- getMarkerFeatures(
+    ArchRProj = proj_20k, 
+    useMatrix = "GeneScoreMatrix", 
+    groupBy = "Clusters",
+    bias = c( "nFrags"),
+    testMethod = "wilcoxon")
+
+markerGenes = c("Krt8","Epcam" ,"Elf5","Ptprc", "Col3a1","Krt5", "Trp63", "Pecam1","Prlr", "Apold1","Pdgfra","Cd52","Esr1","Krt14",
+                 "Cdkn2a","Igfbp7","Met","Cdkn1a","Fn1", "Csn2","Aldh1a3", "Snai1", "Twist1", "Lpl",  "Pnpla2", "Plin1", "Kit", "Serpine2","Cldn22"  , "Aqp1"   ,  "Ankrd37" ,"Cd177")
+
+heatmapGS <- markerHeatmap(
+  seMarker = markersGS, 
+  cutOff = "FDR <= 0.01 & Log2FC >= 1.5", 
+  labelMarkers = markerGenes,
+  transpose = TRUE)
+
+##perform cell annotation:
+proj_20k$type= proj_20k$Clusters
+proj_20k$type=dplyr::recode(proj_20k$type,"C1"= "Immune","C2"= "Immune", "C3"="Immune","C4"="H-S","C5"="H-S","C6"= "Tumor","C7"="LP","C8"="LP","C9"="LP","C10"="Basal","C11"="Endothelial","C12"="Fibroblast")
+```
+
+
+figure1: all ; plot the uamp:
+```{r}
+proj_20k <- addUMAP(ArchRProj = proj_20k, force = T, reducedDims = "IterativeLSI",nNeighbors = 30)
+df <- getEmbedding(ArchRProj  = proj_20k, embedding = "UMAP")
+df <- cbind(df, proj_20k@cellColData)
+colnames(df) <- c("UMAP_1","UMAP_2", colnames(df)[-c(1,2)])
+
+
+
+p= df %>% ggplot(aes(x= UMAP_1, y=UMAP_2, fill= type)) + geom_point(shape = 21, colour="black", stroke=0.7, size=2,alpha=0.8) + scale_fill_manual(values = col_type) + themplot + NoLegend()
+
+png(file.path(figDir, "UMAP_All_Type_WO_cren1.png"), height = 1500, width = 1500, res = 300)
+print(p)
+dev.off()
+
+
+
+h=  ggplot(df  %>% arrange(hist), aes(x= UMAP_1, y=UMAP_2, fill= hist)) + geom_point(shape = 21, colour="black", stroke=0.7, size=2,alpha=0.8) + scale_fill_manual(values = cols_hist) + themplot + NoLegend()
+
+png(file.path(figDir, "UMAP_All_Histology_WO_cren1.png"), height = 1500, width = 1500, res = 300)
+print(h)
+dev.off()
+
+
+h= df %>% BuenColors::shuf() %>%  ggplot( aes(x= UMAP_1, y=UMAP_2, fill= hist)) + geom_point(shape = 21, colour="black", stroke=0.7, size=2,alpha=0.8) + scale_fill_manual(values = cols_hist) + themplot + NoLegend()
+
+png(file.path(figDir, "UMAP_All_Histology_WO_cren1_Shuffled.png"), height = 1500, width = 1500, res = 300)
+print(h)
+dev.off()
+```
+
+```{r}
+pdf(file.path(figDir, "BARPLOT_Histology_Type.pdf"))
+dt <- as.data.frame(table(proj_20k$type,proj_20k$hist))
+dt$Var2=factor(dt$Var2, levels=c("CreN","GCreP","CCI" ))
+p <- ggplot(dt ,aes(x= Var2, y= Freq, fill= Var1))+ 
+  geom_bar(stat="identity", position = "fill",show.legend = TRUE,col="black",width=0.8) + scale_fill_manual(values=col_type) + themplot + gtheme + theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 45, hjust = 1)) + xlab("") + ylab("") + NoLegend()
+print(p)
+dev.off()
+```
