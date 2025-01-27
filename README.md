@@ -11,45 +11,34 @@
 ```
 input
 ├── human
-│   ├── publicDatasets
-│   │   ├── inputCPTAC_breast
-│   │   ├── inputTCGA_Breast
-│   │   └── input_GSE161529
-│   └── snRNAseq
-│       └── juxtaTumor
-│           ├── filtered_matrices
-│           │   ├── S1_BRCA1_WT
-│           │   ├── S2_BRCA1_WT
-│           │   ├── S3_BRCA1_WT
-│           │   ├── S4_BRCA1_WT
-│           │   ├── S5_BRCA1_WT
-                ├── S6_BRCA1_WT
-                ├── S1_BRCA1_mut
-                ├── S2_BRCA1_mut
-                ├── S3_BRCA1_mut
-                ├── S4_BRCA1_mut
-                ├── S5_BRCA1_mut
-                └── S6_BRCA1_mut
-           
-│           
-└── mouse
-    ├── multistaining
-    │   ├── Multi_Thresholded
-    │   
-    └── scRNAseq
-        └── invivo
-            └── Count_Matrices
-                ├── CreN_6m
-                ├── CreN_5m_a
-                ├── CreN_5m_b
-                ├── CreP_2.7m
-                ├── CreP_3m
-                ├── CreP_5m
-                ├── mmT_5.4m
-                ├── mmT_5.2m
-                ├── T2
-                ├── T1
-                └── T3
+│   ├── MERFISH
+│   │   └── juxtaTumor
+│   │       ├── S1_BRCA1_mut
+│   │       ├── S2_BRCA1_mut
+│   │       ├── S3_BRCA1_mut
+│   │       └── S4_BRCA1_mut
+│   └── publicDatasets
+│       ├── CPTAC_breast
+│       └── TCGA_breast
+├── mouse
+│   ├── multistaining
+│   │   └── Multi_Thresholded
+│   ├── scRNAseq
+│   │   └── invivo
+│   │       └── Count_Matrices
+│   │           ├── CreN_5m_a
+│   │           ├── CreN_5m_b
+│   │           ├── CreN_6m
+│   │           ├── CreP_2.7m
+│   │           ├── CreP_3m
+│   │           ├── CreP_5m
+│   │           ├── T1
+│   │           ├── T2
+│   │           ├── T3
+│   │           ├── mmT_5.2m
+│   │           └── mmT_5.4m
+│   └── snH3K4me1
+│       └── Fragment_Files
 ```                
 
 ## 0.0 Setup Instructions - output folder
@@ -58,9 +47,10 @@ The output folder contains the figures, Rdata files, output from the scripts. Si
 .
 ├── human
 │   ├── public_data
-│   └── snRNAseq
+│   └── MERFISH
 └── mouse
     ├── multistaining
+    ├── snH3K4me1
     └── scRNAseq
 ``` 
 #### Note: After running the scripts for each part of the analysis, the output folder will contain sub-folders organized per downstream steps. Final/Intermediate Rdata files generated throughout the analysis will be stored in **RData** folder. 
@@ -96,30 +86,21 @@ The output folder contains the figures, Rdata files, output from the scripts. Si
 │   └── Step3_Sunburst_Plots.Rmd
 ```
 
-
-+ MAYA analysis on juxta-tumor samples from BRCA1 WT and mutated human carriers, and Pal et al and Nee et al datasets 
++ snH3K4me1 histone modification profiling from mouse mammary gland samples
 ```
-├── Scripts_MAYA_Human
-│   ├── 0_HU_QC.Rmd
-│   ├── 1_HU_MAYA_ALL.Rmd
-│   ├── 2_HU_MAYA_EPITHELIAL.Rmd
-│   ├── 3_HU_CNV.Rmd
-│   ├── 4_HU_MAYA_PAL.Rmd
-    └── 5_HU_MAYA_NEE.Rmd
+├── Scripts_Epigenome
+│   ├── Epigenome_mm_H3K4me1_1_Preprocessing.Rmd
+│   └── Epigenome_mm_H3K4me1_2_Epithelial_Subset.Rmd
 ```
 
 
-+ custom analysis on the epithelial compartment from BRCA1+/- human samples from GSE161529 (Pal et al.,2019)
++ MERFISH spatial data analysis of human Juxta-Tumor BRCA1 mut biopsies
 ```
-.
-├── Scripts_EMBO
-│   ├── 0_DataPreparation.Rmd
-│   ├── 1_Processing_EpithelialCompartment.Rmd
-│   ├── 2_Normal_Preneo_Comparison.Rmd
-│   ├── 3_Informativity_PCA.Rmd
-│   ├── 4_CNV_Inference.Rmd
-│   └── PC_informativity_Functions.Rmd
+├── Scripts_Spatial_MERFISH
+│   ├── MERFISH_HU_1_Preprocessing.Rmd
+    └── MERFISH_HU_2_SpatialAutocorrelation.Rmd
 ```
+
 
 + bulk RNAseq data from PanCancer breast (TCGA) and Breast CPTAC data
 
