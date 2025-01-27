@@ -1,0 +1,310 @@
+---
+title: "MERFISH_HU_2_SpatialAutocorrelation"
+author: "Melissa"
+date: "2025-01-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(ggExtra)
+library(cowplot)
+library(ggplot2)
+library(Seurat)
+library(sctransform)
+library(dplyr)
+library(viridis)
+library(SpatialExperiment)
+library(SEraster)
+library(nnSVG)
+library(CooccurrenceAffinity)
+
+library(MERINGUE)
+library(Seurat)
+library(dplyr)
+
+```
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+
+```{r}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+mainDir=here::here() #C:/Users/Melissa S/Desktop/PROJECTS/Spatial_Transcriptomics/MERFISH
+inputDir= file.path(mainDir,"input")
+outputDir= file.path(mainDir,"output")
+
+RDatadir <- file.path(outputDir,"RData") ; if(!file.exists(RDatadir)){dir.create(RDatadir)}
+figDir= file.path(outputDir, "Figures") ; if(!file.exists(figDir)){dir.create(figDir)}
+
+
+samples=list.files(inputDir)
+col_samples= rev(c(  "#F0E492", "#FFB6C1","#0072B2", "#D55E00", "#CC79A7", "#006400","#eb9d01", "#0b1b7f", "#ff9f7d", "#56B4E9", "#7F658A", "#2B6968", "#A8A1E3")) #"#32CD32",
+names(col_samples)=paste0("seu_",samples)
+```
+
+The idea was to perform a spatially aware analysis, focusing on the LP compartment of each sample and perform spatial autocorrelation of the genes in order to have the list of spatially variable genes from the LP compartment only:
+
+
+```{r}
+ seur$seu_region0_AG5988[["RNA"]] <- as( seur$seu_region0_AG5988[["RNA"]], "Assay")
+
+ seur$seu_region0_AG5988=NormalizeData( seur$seu_region0_AG5988)
+s= subset( seur$seu_region0_AG5988, type %in% c("LP", "LP2_a", "LP2_b"))
+#get the normalized counts:
+mat= s@assays$RNA@data
+#get the spatial coordinates:
+pos=Embeddings(s, "spatial") %>% as.data.frame()
+# Get neighbor-relationships
+w <- getSpatialNeighbors(pos, filterDist = 15)
+plotNetwork(pos, w)
+############################################################
+
+# Identify sigificantly spatially auto-correlated genes
+I <- getSpatialPatterns(mat, w)
+
+results.filter <- filterSpatialPatterns(mat = mat,
+                                        I = I,
+                                        w = w,
+                                        adjustPv = TRUE,
+                                        alpha = 0.01,
+                                        minPercentCells = 0.05,
+                                        verbose = TRUE)
+
+scc <- spatialCrossCorMatrix(mat = as.matrix(mat[results.filter,]), 
+                             weight = w)
+
+I$type=ifelse(I$sd > quantile(I$sd, 0.75), "high_SVG", "low_SVG")
+
+seur$seu_region0_AG5988=UCell::AddModuleScore_UCell(seur$seu_region0_AG5988, list("preT"= intersect(I[which(I$type=="high_SVG"),7], toupper(preT))))
+```
+
+
+
+############Sample 3: AD1766 Region2 ###########################
+
+```{r}
+ #seur$seu_region2_AD1766=NormalizeData( seu$seur_region2_AD1766)
+s= subset( seur$seu_region2_AD1766, type %in% c("LP2_b", "LP2_a", "LP"))
+#get the normalized counts:
+mat= s@assays$RNA@data
+#get the spatial coordinates:
+pos=Embeddings(s, "spatial") %>% as.data.frame()
+# Get neighbor-relationships
+w <- getSpatialNeighbors(pos, filterDist = 15)
+plotNetwork(pos, w)
+############################################################
+
+# Identify sigificantly spatially auto-correlated genes
+Iad17 <- getSpatialPatterns(mat, w)
+
+
+Iad17$type=ifelse(Iad17$sd > quantile(Iad17$sd, 0.75), "high_SVG", "low_SVG")
+Iad17$gene=rownames(Iad17)
+seur$seu_region0_AG5988=UCell::AddModuleScore_UCell(seur$seu_region0_AG5988, list("preT"= intersect(Iad17[which(Iad17$type=="high_SVG"),7], toupper(preT))))
+FeaturePlot(seur$seu_region0_AG5988, "preT_UCell", reduction = "spatial")+ scale_color_viridis(option="D", direction = -1)
+```
+
+
+
+
+#####################
+Spatially-aware analysis: focus on AB5301
+```{r}
+ seur$seu_region1_AB5301=NormalizeData( seur$seu_region1_AB5301)
+s= subset( seur$seu_region1_AB5301, type %in% c("LP2_b", "LP2_a", "LP"))
+#get the normalized counts:
+mat= s@assays$RNA@data
+#get the spatial coordinates:
+pos=Embeddings(s, "spatial") %>% as.data.frame()
+# Get neighbor-relationships
+w <- getSpatialNeighbors(pos, filterDist = 15)
+plotNetwork(pos, w)
+############################################################
+
+# Identify sigificantly spatially auto-correlated genes
+I53 <- getSpatialPatterns(mat, w)
+
+
+I53$type=ifelse(I53$sd > quantile(I53$sd, 0.75), "high_SVG", "low_SVG")
+I53$gene=rownames(I53)
+
+seur$seu_region0_AG5988=UCell::AddModuleScore_UCell(seur$seu_region0_AG5988, list("preT"= intersect(I53[which(I53$type=="high_SVG"),7], toupper(preT))))
+FeaturePlot(seur$seu_region0_AG5988, "preT_UCell", reduction = "spatial")+ scale_color_viridis(option="D", direction = -1)
+```
+
+#############################
+
+Spatially-aware analysis: focus on region0_463172; region0_AG5988;region2_AD1766:
+```{r}
+ seur$seu_region0_463172=NormalizeData( seur$seu_region0_463172)
+s= subset( seur$seu_region0_463172, type %in% c("LP2_b", "LP2_a", "LP"))
+#get the normalized counts:
+mat= s@assays$RNA@data
+#get the spatial coordinates:
+pos=Embeddings(s, "spatial") %>% as.data.frame()
+# Get neighbor-relationships
+w <- getSpatialNeighbors(pos, filterDist = 15)
+plotNetwork(pos, w)
+############################################################
+
+# Identify sigificantly spatially auto-correlated genes
+I46 <- getSpatialPatterns(mat, w)
+
+
+I46$type=ifelse(I46$sd > quantile(I46$sd, 0.75), "high_SVG", "low_SVG")
+I46$gene=rownames(I46)
+
+seur$seu_region0_AG5988=UCell::AddModuleScore_UCell(seur$seu_region0_AG5988, list("preT"= intersect(I46[which(I46$type=="high_SVG"),7], toupper(preT))))
+FeaturePlot(seur$seu_region0_AG5988, "preT_UCell", reduction = "spatial")+ scale_color_viridis(option="D", direction = -1)
+```
+
+
+
+
+STEP2: Perform integrative analysis from the 4 samples:
+
+Get the common highly spatially variable genes :
+```{r}
+ v1=intersect(I[which(I$type=="high_SVG"),7], toupper(preT))
+ v2=intersect(Iad17[which(Iad17$type=="high_SVG"),7], toupper(preT))
+ v3=intersect(I53[which(I53$type=="high_SVG"),7], toupper(preT))
+ v4intersect(I46[which(I46$type=="high_SVG"),7], toupper(preT))
+d=  tibble::enframe(list(v1,v2,v3,v4)) %>%
+     tidyr::unnest(value) %>%
+     group_by(value) %>%
+     summarise(freq = n_distinct(name))
+```
+
+get all the variations from the 4 regions:
+```{r}
+sd1=I[,c(3,6,7)]
+sd2=I53[,c(3,6,7)]
+sd3=Iad17[,c(3,6,7)]
+sd4=I46[,c(3,6,7)]
+assertthat::are_equal(sd1$gene, sd2$gene)
+assertthat::are_equal(sd3$gene, sd4$gene)
+assertthat::are_equal(sd1$gene, sd4$gene)
+df=cbind(sd1, sd2, sd3, sd4)
+
+df$mad=c()
+for(i in seq(1, nrow(df))){
+  df$mad[i]= median(c(df[i,1],df[i,4],df[i,7],df[i,10]))
+}
+df$typeall= ifelse(df$mad >= quantile(df$mad,0.75), "HSV", "Low")
+
+#------------ Highly spatially variable genes -------------------#
+seur$seu_region0_AG5988=AddModuleScore_UCell(seur$seu_region0_AG5988, features = list("common_preTs"= intersect(df[which(df$typeall=="HSV"),3], toupper(preT))))
+
+seur$seu_region2_AD1766=AddModuleScore_UCell(seur$seu_region2_AD1766, features = list("common_preTs"= intersect(df[which(df$typeall=="HSV"),3], toupper(preT))))
+
+seur$seu_region1_AB5301=AddModuleScore_UCell(seur$seu_region1_AB5301, features = list("common_preTs"= intersect(df[which(df$typeall=="HSV"),3], toupper(preT))))
+
+seur$seu_region0_463172=AddModuleScore_UCell(seur$seu_region0_463172, features = list("common_preTs"= intersect(df[which(df$typeall=="HSV"),3], toupper(preT))))
+
+
+seur$seu_region0_AG5988=AddModuleScore_UCell(seur$seu_region0_AG5988, features = list("preT"= toupper(preT)))
+
+seur$seu_region2_AD1766=AddModuleScore_UCell(seur$seu_region2_AD1766, features = list("preT"= toupper(preT)))
+
+seur$seu_region1_AB5301=AddModuleScore_UCell(seur$seu_region1_AB5301, features = list("preT"= toupper(preT)))
+
+seur$seu_region0_463172=AddModuleScore_UCell(seur$seu_region0_463172, features = list("preT"= toupper(preT)))
+```
+
+```{r}
+BiocManager::install("Nebulosa")
+library("Nebulosa")
+genes=intersect(df[which(df$typeall=="HSV"),3], toupper(preT))
+genes=c("VIM","AQP5","CCND1","IGFBP4", "ELF5")
+p1 <- plot_density(seur[["seu_region0_463172"]], features=genes, joint = TRUE, combine=F, reduction = "spatial") 
+
+p3 <- plot_density(seur[["seu_region1_AB5301"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+
+p2 <- plot_density(seur[["seu_region2_AD1766"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+
+p4 <- plot_density( seur[["seu_region0_AG5988"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+```
+
+```{r}
+plot_func2=function(d1, size, alpha){
+  p <- ggplot(d1) +
+        aes_string( "center_1",  "center_2" , fill = "feature") +
+        geom_point( size = size, alpha=alpha,colour="black",pch=21, shape = 21, stroke=0.1) +
+        
+        theme(
+            text = element_text(size = 14),
+            panel.background = element_blank(),
+            axis.text.x = element_text(color = "black"),
+            axis.text.y = element_text(color = "black"),
+            axis.line = element_line(size = 0.25),
+            strip.background = element_rect(color = "black", fill = "#ffe5cc")
+        ) + scale_fill_viridis(option = "D",direction = -1) + NoLegend()
+  return(p)}
+#### p1:
+d=p1$`VIM+ AQP5+ CCND1+ IGFBP4+`$data
+p=plot_func2(d, size = 0.8, alpha = 0.7)
+png(file.path(outputDir,"Nebulosa_5maingenes_region0_463172_v4.png"), height = 1500, width = 1500, res = 300)
+print(p)
+dev.off()
+#### p2
+p2 <- plot_density(seur[["seu_region2_AD1766"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+d=p2$`VIM+ AQP5+ CCND1+ IGFBP4+`$data
+
+p=plot_func2(d, size = 0.8, alpha = 0.7)
+png(file.path(outputDir,"Nebulosa_5maingenes_region2_AD1766_v4.png"), height = 1500, width = 1500, res = 300)
+print(p)
+dev.off()
+
+
+p4 <- plot_density( seur[["seu_region0_AG5988"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+d=p4$`VIM+ AQP5+ CCND1+ IGFBP4+`$data
+p=plot_func2(d ,  size = 0.8, alpha = 0.7)
+png(file.path(outputDir,"Nebulosa_5maingenes_region0_AG5988_v4.png"), height = 1500, width = 1500, res = 300)
+print(p)
+dev.off()
+####
+d=p3$`VIM+ AQP5+ CCND1+ IGFBP4+`$data
+p=plot_func2(d ,  size = 0.8, alpha = 0.7)
+png(file.path(outputDir,"Nebulosa_5maingenes_region1_AB5301_v4.png"), height = 1500, width = 1500, res = 300)
+print(p)
+dev.off()
+####################################################################
+p3 <- plot_density(seur[["seu_region1_AB5301"]], genes, joint = TRUE, combine=F, reduction = "spatial")
+d=p3$`VIM+ AQP5+ CCND1+ IGFBP4+`$data
+
+p=plot_func(d1,  size = 0.8, alpha = 0.3)
+png(file.path(outputDir,"Nebulosa_4maingenes_region1_AB5301_v1.png"), height = 1200, width = 1200, res = 300)
+print(p)
+dev.off()
+
+p=plot_func(d1, size = 1, alpha = 0.5)
+png(file.path(outputDir,"Nebulosa_4maingenes_region1_AB5301_v2.png"), height = 1200, width = 1200, res = 300)
+print(p)
+dev.off()
+
+####################################################################
+d1=p4$`VIM+ CCND1+ IGFBP4+ AQP5+`$data
+p=plot_func(d1,  size = 0.8, alpha = 0.3)
+png(file.path(outputDir,"Nebulosa_4maingenes_region0_AG5988_v1.png"), height = 1200, width = 1200, res = 300)
+print(p)
+dev.off()
+
+p=plot_func(d1, size = 1, alpha = 0.5)
+png(file.path(outputDir,"Nebulosa_4maingenes_region0_AG5988_v2.png"), height = 1200, width = 1200, res = 300)
+print(p)
+dev.off()
+
+```
