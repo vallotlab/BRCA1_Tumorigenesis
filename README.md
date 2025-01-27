@@ -4,10 +4,12 @@
 
 
 ## 0.0 Setup Instructions - input folder
+* All packages and package versions are precised in the **global_variables.Rmd** file and in the Methods sections, respectively. Typical install time on a "normal" desktop of all the required packages does not exceed 40min.
 * To start the analysis and reproduce the results as in the paper, the folder **BRCA1_Tumorigenesis** has to be downloaded as it is. 
 * Once placed at the root directory, the user creates both an **input** and **output** empty folders.
-* The user has to download the input data (count matrices) from GSE200444, and place it in the "input" folder
-* In the input folder, each data_type has to be organized in its own sub-folder. Its architecture should be as following:
+* The user has to download the input data (count matrices) from GSE200444, and place it in the "input" folder.
+* Expected run time for demo on a "normal" desktop computer (MacBook Pro M3) is < 1H from the input matrices to the main figures of the manuscript.
+* In the **input** folder, each data_type has to be organized in its own sub-folder. Its architecture should be as following:
 ```
 input
 ├── human
