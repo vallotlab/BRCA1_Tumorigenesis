@@ -1,0 +1,739 @@
+---
+title: "invivo_Mouse_CellCellCommunication"
+author: "Melissa"
+date: "24/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+outDir="C:/Users/Melissa S/Desktop/PROJECTS/BRCA1_Tumorigenesis/Tumor_BRCA_p53_NonUsedData/output/mouse/scRNAseq_invivo_Stroma/"
+ccDir= file.path(outDir,"CellCell_Communication_New") ; if(!file.exists(ccDir)){dir.create(ccDir)}
+
+brca=qs::qread(paste0(RDatadir, "/Invivo_Mouse_AllCompartments_Annotated_forCCom.qs"))
+```
+
+```{r}
+gtheme= theme (axis.text.x = element_text(size=12, face="bold", colour = "black", angle = 0, hjust = 0.5),axis.text.y = element_text(size=12, face="bold", colour = "black"),legend.text = element_text(face = "bold", size = 12),text=element_text(size=14, face="bold", colour = "black"))
+###
+themplot=theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.x=element_blank())
+```
+
+
+The idea is to compare how P16+, LP , Avd and Basal from ONLY control or Control with microlesions communicate with the stroma
+##------------------------- Method1 : CellChat------------------------------##
+```{r}
+library(Seurat)
+library(ggplot2)
+library(CellChat)
+library(patchwork)
+options(stringsAsFactors = FALSE)
+```
+
+```{r}
+library(ggpubr)
+seu= subset(brca,  orig.ident %!in% c("T_5322_mm_6M" ,"T_5517_mm_6.9M", "T_6413_mm_6.9M"))
+
+seu=subset(seu, final.subtype %in% c("Endothelial" , "Pericytes",  "Basal" ,"Fibro", "Cd8_T","MacrophagesRE" ,      "Luminal H-S","LP" ,"Pi16_Fibro" ,"MigDC", "Lymphatic_Endo","cDC2" ,  "Avd","Treg" ,"MacrophagesR",        "Schwann", "p16_cycling" ,"Schwnn","B", "cDC1" ,"Fibroblast" , "pDC" , "MoDC", "Isg15+ GCreP_L_7412" , "Plasma"  )) 
+DefaultAssay(seu)="RNA"
+
+seu= seu %>% SCTransform( method = "glmGamPoi",  verbose = FALSE)  %>% RunPCA( npcs = 60)   %>% RunUMAP(., reduction= "pca", dims= 1:50 ) %>% FindNeighbors(., reduction = "pca", dims = 1:50) %>% FindClusters(., resolution = 0.8,reduction = "pca")
+
+#custom colors:
+epith_cols=c("LP"= "#F27ECB",  "Avd"="#DB87E6" ,"Luminal H-S"= "#F0BDED" , "p16_cycling"="#AAF54F" , "Isg15+ GCreP_L_7412"= "#A2CBCF",  "Hist1h2ap+ T_1"="#A1B3E6" , "Emp1+ T_1"="#5783BD" , "Mgp+ T_1"= "#3B58B8" , "Apod+ T_1"= "#1F29AD")
+
+col1=epith_cols[which(names(epith_cols) %in% unique(seui$final.subtype))]
+col2=which(!unique(seui$final.subtype) %in% names(col1))
+ncol2=unique(seui$final.subtype)[col2]
+strcol=scPalette(length(ncol2))
+
+names(strcol)= ncol2
+colo= c(col1, strcol)
+qs::qsave(colo, file.path(RDatadir, "Colors_Clusters_CellCellComm.qs"))
+
+png(paste0(figDir, "/UMAP_TMEF.png"),height = 1000, width = 1000, res = 300)
+p <- DimPlot(seui, group.by = "final.subtype", cols = colo, pt.size = 1) +  NoAxes()+ NoLegend() + ggtitle("")
+p[[1]]$layers[[1]]$aes_params$alpha = 0.7
+print(p)
+dev.off()
+
+pdf(paste0(figDir, "/Legend_UMAP_TME.pdf"))
+p <- as_ggplot(get_legend(DimPlot(seui, group.by = "final.subtype", cols = colo, pt.size = 2) ))
+print(p)
+dev.off()
+```
+
+Try integration:
+```{r}
+DefaultAssay(seu)="RNA"
+seui=seu %>% SCTransform( method = "glmGamPoi",  verbose = FALSE)  %>%  RunHarmony("orig.ident", plot_convergence = F,assay.use = "SCT")  %>% RunPCA( npcs = 60)   %>% RunUMAP(., reduction= "harmony", dims= 1:30 ) %>% FindNeighbors(., reduction = "harmony", dims = 1:30) %>% FindClusters(., resolution = 0.8,reduction = "harmony")
+qs::qsave(seui,file.path(ccDir, "Harmony_Integrated_Subse_forCC.qs"))
+seui=qs::qread(file.path(ccDir, "Harmony_Integrated_Subse_forCC.qs"))
+
+
+seui$final.subtype=ifelse(seui$final.subtype %in% c("Pi16_Fibro","Fibro"), "Fibroblast", as.character(seui$final.subtype))
+
+seui$final.subtype=ifelse(seui$final.subtype %in% c("Schwnn"), "Schwann", as.character(seui$final.subtype))
+
+```
+
+
+```{r}
+pdf("C:/Users/Melissa S/Desktop/ForCeline.pdf")
+p=VlnPlot(seu, "Fgf8", group.by = "final.subtype", cols = colo) + NoLegend() 
+print(p)
+p=VlnPlot(seu, "Fgfr1", group.by = "final.subtype", cols = colo) + NoLegend() 
+print(p)
+p=VlnPlot(seu, "Fgfr2", group.by = "final.subtype", cols = colo) + NoLegend() 
+print(p)
+dev.off()
+```
+
+Create CellChat Object:
+```{r}
+seu= subset(brca,  tumorsize %in% c("CTRL_PreCancerous","CTRL"))
+seu=subset(seu, final.subtype %in% c("Basal", "LP", "Avd", "Endothelial", "Fibro", "NK", "Mo","Fibro2","Pericytes","Luminal H-S" ,"Lymphatic_endothelial" ," Cd4 T" ,"Schwann", "P16+ Pre-lesional", "B"))
+```
+start here:
+```{r}
+library(CellChat)
+input <- GetAssayData(object = seui, assay = 'SCT', slot = "data")
+
+seui$final.subtype = droplevels(seui$final.subtype, exclude = setdiff(levels(seui$final.subtype),unique(seui$final.subtype)))
+#--Create cellchat object ----#
+cellchat=CellChat::createCellChat(object = input, meta= seui@meta.data, group.by = "final.subtype")
+gc()
+
+#---Load CellChat DB ----##
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB)
+CellChatDB.use <- CellChatDB 
+cellchat@DB <- CellChatDB.use
+##Subset the entire oject:
+cellchat <- subsetData(cellchat)
+```
+
+
+Of note, ‘trimean’ approximates 25% truncated mean, implying that the average gene expression is zero if the percent of expressed cells in one group is less than 25%. 
+```{r}
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+```
+#Compute the communication probability and infer cellular communication network
+
+```{r}
+cellchat <- computeCommunProb(cellchat, raw.use = TRUE,population.size = FALSE)
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+#---- Extract the communnications through ligand/receptor pairs:
+df.net=subsetCommunication(cellchat)
+writexl::write_xlsx(df.net, paste0(ccDir, "/CellCellComm_Pairs_20cellsMin.xlsx"))
+df.net=readxl::read_excel(paste0(ccDir, "/CellCellComm_Pairs_20cellsMin.xlsx"))
+```
+
+#Infer the cell-cell communication at a signaling pathway level
+```{r}
+cellchat <- computeCommunProbPathway(cellchat, thresh = 0.05)
+
+#dp= cellchat@net$prob %>% as.data.frame() %>% t() %>% as.data.frame()
+```
+
+#Calculate aggregated cell-cell communikcation network:
+```{r}
+cellchat <- aggregateNet(cellchat)
+qs::qsave(cellchat, file.path(RDatadir, "Cellchat_Object.qs"))
+cellchat=qs::qread( file.path(RDatadir, "Cellchat_Object.qs"))
+```
+
+Visualize the intetractions:
+```{r}
+groupSize <- as.numeric(table(cellchat@idents))
+
+windowsFonts("Arial" = windowsFont("Arial"))
+
+pdf(file.path(figDir, "InteractionNetwork_CellCellComm.pdf"))
+
+p <- netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+
+g <- netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+h <- netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength", sources.use = "p16_cycling"  )
+
+i <- netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength", targets.use = "P16+ Pre-lesional" )
+
+print(p)
+print(g)
+print(h)
+print(i)
+dev.off()
+```
+
+More refined visualizations:
+```{r}
+mat <- cellchat@net$weight
+colo=colo[rownames(mat)]
+
+
+pdf(file.path(figDir, "/InteractionNetwork_CellCellComm_1to1_OutwardCommunication.pdf"))
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  p<- netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i],   color.use = colo,targets.use=rownames(mat)[i] , edge.label.color = colo[i],edge.width.max = 3.1)
+  print(p)
+}
+dev.off()
+
+netVisual_circle(cellchat@net$count,
+vertex.weight = groupSize,
+vertex.label.cex = 1,
+weight.scale = T,
+label.edge= F,
+title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight,
+vertex.weight = groupSize,
+vertex.label.cex = 1,
+weight.scale = T,
+label.edge= F,color.use = colo,
+title.name = "Interaction weights/strength")
+
+
+
+
+
+
+pdf(file.path(figDir, "/InteractionNetwork_CellCellComm_1to1_OutwardCommunication.pdf"))
+for (i in 1:nrow(mat)) {
+  #mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2 <- mat[i, ]
+  p<- netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i],   color.use = colo,targets.use=rownames(mat)[i] , edge.label.color = colo[i],edge.width.max = 3.1)
+  print(p)
+}
+dev.off()
+
+```
+
+Part III: Visualization of cell-cell communication network
+
+#Pathways randomly selected:
+```{r}
+pathways.show= c("TGFb", "FGF", "VEGF","MIF","CXCL","SPP1","THBS", "NOTCH","LAMININ", "KIT", "FN1", "JAM", "COLLAGEN", "BMP","ANGPTL","AGRN")
+
+type= df.net[df.net$pathway_name %in% pathways.show, c(9,10)] %>% unique()
+
+pdf(file.path(ccDir, "/Heatmap_SomeSelectedPathways.pdf"))
+for(i in seq_len(length(pathways.show))){
+  p <- netVisual_heatmap(cellchat, signaling = pathways.show[i], color.heatmap = "Reds") + ggtitle(paste0(pathways.show[i],"_", type[i,2]))
+  print(p)
+  
+  g <- netAnalysis_contribution(cellchat, signaling = pathways.show[i]) + ggtitle(paste0(pathways.show[i],"_", type[i,2]))
+  print(g)
+}
+dev.off()
+```
+
+Strategy2: Tace only care about top pathways as P16=source:
+```{r}
+#Nbr of interactions:
+dtest2=rankNet(cellchat, slot.name = "netP", measure = "count", mode="single", sources.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name), thresh = 0.1,cutoff.pvalue = 0.01)[["data"]]
+
+h2= dtest2 %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(dtest2$contribution.scaled, 0.75), color="red" )
+##############-------------------------------------------------------#######
+
+dtestw=rankNet(cellchat, slot.name = "netP", measure = "weight", mode="single", sources.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name))[["data"]]
+
+hw= dtestw %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(dtestw$contribution.scaled, 0.75), color="red" )
+
+##--- TOP contributors---##
+top_count=dtest2 %>% dplyr::filter(contribution.scaled >= quantile(dtest2$contribution.scaled, 0.75) ) %>% select("name")
+
+top_weight=dtestw %>% dplyr::filter(contribution.scaled >= quantile(dtestw$contribution.scaled, 0.75) ) %>% select("name")
+
+
+comm_path= intersect(as.character(top_weight$name), as.character(top_count$name))
+
+
+
+l= list(weighted_Source=as.character(top_weight$name), count_Source= as.character(top_count$name))
+
+pdf(paste0(ccDir, "/VennDiagram_p16_sources.pdf"))
+h=ggVennDiagram::ggVennDiagram(l) + scale_fill_viridis(option="D")
+print(h)
+dev.off()
+#----------------------------------------------------------------#####
+####------------- TAKE THE PROBA DATASET--------------------###
+#dt=cellchat@netP$prob %>% as.data.frame()
+#dt=dt[,-which(colSums(dt)==0)]
+#dt= dt[which(rownames(dt) %in% grep("P16", rownames(dt), value = TRUE)),]
+###
+dt=cellchat@netP$prob
+arr_long <- reshape2::melt(dt)
+
+test1= arr_long[which(arr_long$Var1 %in% grep("p16_", arr_long$Var1, value = TRUE)),]
+#------------------------#
+sm=aggregate(test1$value, by=list(test1$Var3), FUN=sum) %>% as.data.frame()
+sm=sm %>% dplyr::filter(x != 0)
+colnames(sm)=c("pathway","sum")
+#-----------------#
+vm=aggregate(test1$value, by=list(test1$Var3), FUN=var) %>% as.data.frame()
+vm=vm %>% dplyr::filter(x != 0)
+colnames(vm)=c("pathway","variance")
+#------------------#
+identical(vm$pathway, sm$pathway)
+
+dt=cbind(sm, vm)
+dt=dt[,c(1,2,4)]
+
+s2= dt %>% ggplot( aes(x=sum, y= variance)) + geom_point()+
+  
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(sm$x, 0.8), color="red" )
+
+s2= sm %>% ggplot( aes(x=x)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(sm$x, 0.8), color="red" )
+#-##################################################################
+dt=cellchat@netP$prob
+arr_long <- reshape2::melt(dt)
+dt2= aggregate(arr_long$value, by=list(arr_long$Var1, arr_long$Var3), FUN=sum) %>% as.data.frame()
+
+
+
+dt2=dt2[-which(dt2$x < (0.00)),]
+#dt2=dt2[-which(dt2$x < 0.01),]
+ 
+dt4=dt2 %>% group_by(Group.2) %>% top_n(n = 2, wt = x)
+#dt3=dt2 %>% group_by(Group.2) %>% top_n(n = 1, wt = x)
+ writexl::write_xlsx(dt4, paste0(figDir, "/Top_Comms_PercellType_Sum_Thr001_Top2Sources.xlsx"))
+dt4=readxl::read_excel(paste0(figDir, "/Top_Comms_PercellType_Sum_Thr001_Top2Sources.xlsx"))
+
+
+
+
+d4=reshape2::dcast(dt4, Group.2 ~ Group.1, value.var= "x")
+d4=d4 %>% tibble::column_to_rownames("Group.2")
+d4[is.na(d4)]=0
+
+d4=d4[,c(17,9,3,11,10,1,8,7,12,20,19,5,6,18,15,16,4,21,2,20,13,14)]
+
+ p <- pheatmap::pheatmap(t(d4), scale = "column", cluster_rows = TRUE,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(5))
+ pdf(paste0(figDir, "/Heatmap2_TopPathways_SumScore_Top1_Thr007.pdf"), width = 12)
+ print(p)
+ dev.off()
+ 
+ 
+##TEST:
+ dt2= aggregate(arr_long$value, by=list(arr_long$Var1, arr_long$Var3), FUN=sum) %>% as.data.frame()
+ d4=reshape2::dcast(dt2, Group.2 ~ Group.1, value.var= "x")
+d4=d4 %>% tibble::column_to_rownames("Group.2")
+#d4[is.na(d4)]=0
+
+#dcut the heatmap in 2:
+d_epith=d4[, c("Isg15+ GCreP_L_7412","p16_cycling", "LP", "Avd", "Basal", "Luminal H-S" )]
+ d_stroma=d4[, c("cDC1", "cDC2","pDC" ,"MoDC","MigDC" , "MacrophagesR", "MacrophagesRE","B","Plasma","Cd8_T","Treg" ,"Endothelial","Lymphatic_Endo","Schwann","Pericytes","Fibroblast")]
+ 
+ 
+d_epith=d_epith[-which(rowSums(d_epith)== 0),] 
+d_stroma=d_stroma[-which(rowSums(d_stroma)== 0),] 
+
+
+p=  pheatmap::pheatmap(t(d_epith), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+g=  pheatmap::pheatmap(t(d_stroma), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+  pdf(paste0(figDir, "/Heatmap_Pathways_Senders_Epith_Stroma.pdf"), width = 12)
+ print(p)
+ prit(g)
+ dev.off()
+
+
+ 
+ 
+ p= pheatmap::pheatmap(t(d4)[,c(24,59,40,1:23,25:39,41:58,60:69)], scale = "column", cluster_rows = F,  cluster_cols =F, color = colorRampPalette(c("navy", "white", "firebrick3"))(5))
+ 
+  pdf(paste0(figDir, "/Heatmap2_TopPathways_SumScore_Top1_Thr007_2.pdf"), width = 12)
+ print(p)
+ dev.off()
+#----------------------------#
+
+dt3 %>% ggplot( aes(x=x)) + geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=50, fill="darkblue") + themplot
+
+
+netVisual_chord_gene(cellchat, sources.use = "P16+ Pre-lesional", lab.cex = 0.5,legend.pos.y = 30)
+
+
+```
+
+
+
+
+
+
+
+
+
+try the same as target by inversing:
+```{r}
+ dt2_r= aggregate(arr_long$value, by=list(arr_long$Var2, arr_long$Var3), FUN=sum) %>% as.data.frame()
+ d4_r=reshape2::dcast(dt2_r, Group.2 ~ Group.1, value.var= "x")
+d4_r=d4_r %>% tibble::column_to_rownames("Group.2")
+#d4[is.na(d4)]=0
+
+#dcut the heatmap in 2:
+dr_epith=d4_r[, c("Isg15+ GCreP_L_7412","p16_cycling", "LP", "Avd", "Basal", "Luminal H-S" )]
+ dr_stroma=d4_r[, c("cDC1", "cDC2","pDC" ,"MoDC","MigDC" , "MacrophagesR", "MacrophagesRE","B","Plasma","Cd8_T","Treg" ,"Endothelial","Lymphatic_Endo","Schwann","Pericytes","Fibroblast")]
+ 
+ 
+dr_epith=dr_epith[-which(rowSums(dr_epith)== 0),] 
+dr_stroma=dr_stroma[-which(rowSums(dr_stroma)== 0),] 
+
+
+p=  pheatmap::pheatmap(t(dr_epith), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+g=  pheatmap::pheatmap(t(dr_stroma), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+  pdf(paste0(figDir, "/Heatmap_Pathways_Senders_Epith_Stroma_RECEIVERS.pdf"), width = 12)
+ print(p)
+ print(g)
+ dev.off()
+ 
+ l=list("SenderPathways"= d4, "ReceiverPathways"=d4_r)
+writexl::write_xlsx(l, file.path(figDir, "Sender_ReceiverPathways.xlsx"))
+writexl::write_xlsx(arr_long, file.path(figDir, "Pairs_Sender_Receiver_Pathway.xlsx"))
+
+arr_long=readxl::read_excel(file.path(figDir, "Pairs_Sender_Receiver_Pathway.xlsx"))
+```
+
+
+
+
+```{r}
+ dt2= aggregate(arr_long$value, by=list(arr_long$Var1, arr_long$Var3), FUN=sum) %>% as.data.frame()
+ d4=reshape2::dcast(dt2, Group.2 ~ Group.1, value.var= "x")
+d4=d4 %>% tibble::column_to_rownames("Group.2")
+
+
+
+
+d_epith=d4[, c("Isg15+ GCreP_L_7412","p16_cycling", "LP", "Avd", "Basal", "Luminal H-S" )]
+ d_stroma=d4[, c("cDC1", "cDC2","pDC" ,"MoDC","MigDC" , "MacrophagesR", "MacrophagesRE","B","Plasma","Cd8_T","Treg" ,"Endothelial","Lymphatic_Endo","Schwann","Pericytes","Fibroblast")]
+ 
+ 
+d_epith=d_epith[-which(rowSums(d_epith)== 0),] 
+d_stroma=d_stroma[-which(rowSums(d_stroma)== 0),] 
+
+
+p=  pheatmap::pheatmap(t(d_epith), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+g=  pheatmap::pheatmap(t(d_stroma), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+  pdf(paste0(figDir, "/Heatmap_Pathways_Senders_Epith.pdf"), width = 12)
+ print(p)
+
+ dev.off()
+
+   pdf(paste0(figDir, "/Heatmap_Pathways_Senders_Stroma.pdf"), width = 12)
+ print(g)
+
+ dev.off()
+```
+
+Do the same for receivers:
+
+```{r}
+ dt2_r= aggregate(arr_long$value, by=list(arr_long$Var2, arr_long$Var3), FUN=sum) %>% as.data.frame()
+ d4_r=reshape2::dcast(dt2_r, Group.2 ~ Group.1, value.var= "x")
+d4_r=d4_r %>% tibble::column_to_rownames("Group.2")
+#d4[is.na(d4)]=0
+
+#dcut the heatmap in 2:
+dr_epith=d4_r[, c("Isg15+ GCreP_L_7412","p16_cycling", "LP", "Avd", "Basal", "Luminal H-S" )]
+ dr_stroma=d4_r[, c("cDC1", "cDC2","pDC" ,"MoDC","MigDC" , "MacrophagesR", "MacrophagesRE","B","Plasma","Cd8_T","Treg" ,"Endothelial","Lymphatic_Endo","Schwann","Pericytes","Fibroblast")]
+ 
+dr_epith=dr_epith[-which(rowSums(dr_epith)== 0),] 
+dr_stroma=dr_stroma[-which(rowSums(dr_stroma)== 0),] 
+ 
+ 
+
+
+
+p=  pheatmap::pheatmap(t(dr_epith), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+g=  pheatmap::pheatmap(t(dr_stroma), scale = "column", cluster_rows = F,  cluster_cols =TRUE, color = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+
+  pdf(paste0(figDir, "/Heatmap_Pathways_Receivers_Epith.pdf"), width = 12)
+ print(p)
+
+ dev.off()
+
+   pdf(paste0(figDir, "/Heatmap_Pathways_Receivers_Stroma.pdf"), width = 12)
+ print(g)
+
+ dev.off()
+```
+
+
+
+
+#--------Find Significant pathways in the "P16 population"---------------##
+#ignificant 
+```{r}
+#Mix P16 as both targets and sources:
+dtest= rankNet(cellchat, slot.name = "netP", measure = "count", mode="single", targets.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name))[["data"]]
+
+dtest2=rankNet(cellchat, slot.name = "netP", measure = "count", mode="single", sources.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name))[["data"]]
+
+h1= dtest %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkgreen")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asTargets")+ geom_vline(xintercept =quantile(dtest$contribution.scaled, 0.8), color="red" )
+
+h2= dtest2 %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(dtest2$contribution.scaled, 0.8), color="red" )
+
+pdf(paste0(ccDir, "/RanknedPathways_Count_p16_targets_sources.pdf"))
+print(h1)
+print(h2)
+dev.off()
+
+
+##--- TOP contributors---##
+c4p=dtest %>% slice_max(contribution.scaled,n=7 ) %>% select("name") #"target"
+c5p=dtest2 %>% slice_max(contribution.scaled,n=7 ) %>% select("name") #source
+
+c6p= unique(c(c4p$name, c5p$name))
+c6p=as.character(c6p)
+###
+rm(dtest)
+rm(dtest2)
+#----- Take per quantile :DIDNT WORK: LESS PATHWAYS OUTPUT 
+#weight : "Information flow"
+#count: Number of interaction
+dtest= rankNet(cellchat, slot.name = "netP", measure = "weight", mode="single", targets.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name))[["data"]]
+
+dtest2=rankNet(cellchat, slot.name = "netP", measure = "weight", mode="single", sources.use = c( "p16_cycling"), signaling= unique(df.net$pathway_name))[["data"]]
+#--- PLOT DISTRIBUTIONS-----#
+h1= dtest %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkgreen")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asTargets")+ geom_vline(xintercept =quantile(dtest$contribution.scaled, 0.8), color="red" )
+
+h2= dtest2 %>% ggplot( aes(x=contribution.scaled)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100, fill="darkblue")+themplot+ggtitle("Ranknet_Pathways_Pretumoral_asSources") + geom_vline(xintercept =quantile(dtest2$contribution.scaled, 0.8), color="red" )
+
+pdf(paste0(cellchatDir, "/RanknedPathways_weighted_p16_targets_sources.pdf"))
+print(h1)
+print(h2)
+dev.off()
+
+c4p=dtest %>% slice_max(contribution.scaled,n=7 ) %>% select("name") #"target"
+c5p=dtest2 %>% slice_max(contribution.scaled,n=7 ) %>% select("name") #source
+
+
+
+c1p= dtest[which(dtest$contribution.scaled > quantile(dtest$contribution.scaled, 0.5)),1] #FN1      THBS     PTN      LAMININ  COLLAGEN
+c2p=dtest2[which(dtest2$contribution.scaled > quantile(dtest2$contribution.scaled, 0.5)),1] #MIF      LAMININ  SPP1     COLLAGEN
+
+c3p= unique(c(c1p,c2p))
+c3=as.character(c3p)
+
+l= list(weighted_Target_Source=c3, count_Target_Source= c6)
+
+pdf(paste0(cellchatDir, "/VennDiagram_p16_targets_sources.pdf"))
+h=ggVennDiagram::ggVennDiagram(l) + scale_fill_viridis(option="D")
+print(h)
+dev.off()
+```
+
+```{r}
+c7=intersect(c3p,c6p)
+#type= df.net[df.net$pathway_name %in% c7, c(9,10)] %>% unique()
+pth=c("MIF", "SPP1","FGF")
+pdf(file.path(figDir, "/Heatmap_TopPathways_P16pop_Sender_NewColors.pdf"))
+for(i in seq_len(length(pth))){
+  
+  p <- netVisual_heatmap(cellchat, signaling = pth[i], color.heatmap = "Reds", color.use = colo) + ggtitle(pth[i])
+  print(p)
+  
+  g <- netAnalysis_contribution(cellchat, signaling = pth[i]) + ggtitle(pth[i])
+  print(g)
+}
+dev.off()
+```
+
+```{r}
+SIGNALING=cellchat@netP$pathways 
+
+CONTRIB=netAnalysis_contribution(cellchat,signaling=pth[2],thresh=0.05,return.data=T,font.size=12)
+CONTRIB$LR.contribution$name = factor(CONTRIB$LR.contribution$name,levels=CONTRIB$LR.contribution$name[order(CONTRIB$LR.contribution$contribution)])
+
+  
+  g <- netAnalysis_contribution(cellchat, signaling = pth[3]) + ggtitle(pth[3])
+```
+
+Plot gene expression programs of top signaling pathways:
+```{r}
+pdf(file.path(figDir, "/StackVln_TopCommon_Pathways_Target_Source_P16_Ranknet.pdf"))
+for(i in seq_len(length(c7))){
+  s= plotGeneExpression(cellchat, signaling = c7[i])+ ggtitle(paste0(c7[i], "_SignalingPathway"))
+  print(s)
+}
+dev.off()
+```
+
+```{r}
+genes= c("FGF8",)
+```
+
+
+
+
+
+Visualize cell-cell communication mediated by multiple ligand-receptors or signaling pathways
+```{r}
+id=c(8,14,2)
+names(id)=c("LP", "P16", "Avd")
+#------------------- EXTRACT AS SOURCE----------------------##
+#P16 lesional cells:
+p.source <- netVisual_bubble(cellchat, sources.use = id[2],remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+p.source$type="source"
+#LP:
+l.source= netVisual_bubble(cellchat, sources.use = id[1], remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+l.source$type="source"
+#Avd:
+a.source= netVisual_bubble(cellchat, sources.use = id[3], remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+a.source$type="source"
+
+#------------------- EXTRACT AS TARGET----------------------##
+#P16 lesional cells:
+p.target <- netVisual_bubble(cellchat, targets.use = id[2],remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+p.target$type="target"
+#LP:
+l.target= netVisual_bubble(cellchat, targets.use = id[1], remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+l.target$type="target"
+#Avd:
+a.target= netVisual_bubble(cellchat,  targets.use = id[3], remove.isolate = TRUE, thresh = 0.00005, color.heatmap = "viridis", return.data = TRUE)[["communication"]]
+a.target$type="target"
+
+#----------------------
+m=rbind(p.target, p.source)
+m2=rbind(l.target, l.source)
+m3=rbind(a.target, a.source)
+
+h1= rbind(p.target, p.source) %>% ggplot( aes(x=prob, fill= type)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100)+themplot+ scale_fill_manual(values=c("darkgreen", "darkgrey"))+
+     geom_vline(xintercept = quantile(p.target$prob, 0.99), color="red")+
+     geom_vline(xintercept = quantile(p.source$prob, 0.99), color="blue")+ggtitle("ContribPairs_P16_Target")
+
+h2= rbind(l.target, l.source) %>% ggplot( aes(x=prob, fill= type)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100)+themplot+ scale_fill_manual(values=c("darkgreen", "darkgrey"))+
+     geom_vline(xintercept = quantile(l.target$prob, 0.99), color="red")+
+     geom_vline(xintercept = quantile(l.source$prob, 0.99), color="blue")+ggtitle("ContribPairs_LP_Target")
+
+h3= rbind(a.target, a.source) %>% ggplot( aes(x=prob, fill= type)) + 
+     geom_histogram(aes(y=..density..), alpha=0.4,  position="identity", bins=100)+themplot+ scale_fill_manual(values=c("darkgreen", "darkgrey"))+
+     geom_vline(xintercept = quantile(a.target$prob, 0.99), color="red")+
+     geom_vline(xintercept = quantile(a.source$prob, 0.99), color="blue")+ggtitle("ContribPairs_Avd_Target")
+
+pdf(paste0(cellchatDir, "/ContributingPairs_Source_Target_LP_Avd_P16_Qtl_99.pdf"))
+print(h1)
+print(h2)
+print(h3)
+dev.off()
+#-----------GET THE MOST IMPORTANT INTERACTION PAIRS PER CELL TYPE AS SOURCE-------------------------##
+pairs.avd_source= data.frame(interaction_name=a.source[which(a.source$prob > quantile(a.source$prob, 0.95)),7])
+pairs.p16_source= data.frame(interaction_name=p.source[which(p.source$prob > quantile(p.source$prob, 0.95)),7])
+pairs.lp_source=  data.frame(interaction_name=l.source[which(l.source$prob > quantile(l.source$prob, 0.95)),7])
+
+pairs_source=list(pairs.lp_source,pairs.p16_source,pairs.avd_source)
+names(pairs_source)= names(id)
+
+#-----------GET THE MOST IMPORTANT INTERACTION PAIRS PER CELL TYPE AS TARGET-------------------------##
+pairs.avd_target= data.frame(interaction_name=  a.target[which(a.target$prob > quantile(a.target$prob, 0.95)),7 ])
+pairs.p16_target= data.frame(interaction_name=  p.target[which(p.target$prob > quantile(p.target$prob, 0.95)),7 ])
+pairs.lp_target=  data.frame(interaction_name=  l.target[which(l.target$prob > quantile(l.target$prob, 0.95)),7 ])
+
+pairs_target=list(pairs.lp_target, pairs.p16_target,pairs.avd_target)
+names(pairs_target)= names(id)
+#------------- VISUALIZE TOP PAIRS FOR TARGETS AND SOURCES------------------------------###
+pdf(paste0(cellchatDir, "/BubblePlot_TopPairs_Qtl95_LP_Avd_P16_asSOURCE_TARGET_Thr005.pdf"), height = 10, width = 10)
+for(i in seq(1,3)){
+g <- netVisual_bubble(cellchat, remove.isolate = TRUE,sources.use = id[i] , color.heatmap = "viridis", return.data = FALSE, thresh = 0.05, pairLR.use = data.frame(interaction_name=pairs_source[[i]]))
+print(g)
+
+h <- netVisual_bubble(cellchat, remove.isolate = TRUE,targets.use = id[i] , color.heatmap = "viridis", return.data = FALSE, thresh = 0.05, pairLR.use = data.frame(pairs_target[i]))
+print(h)
+
+}
+dev.off()
+```
+
+Compute and visualize the network centrality scores
+
+```{r}
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+
+pdf(paste0(figDir, "/Signgaling_Role_Network_Pathways_Interes.pdf"), height = 5, width = 5)
+g <- netAnalysis_signalingRole_network(cellchat, signaling = c7) 
+print(g)
+dev.off()
+```
+
+Visualize the dominant senders (sources) and receivers (targets) in a 2D space
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+gg1 <- netAnalysis_signalingRole_scatter(cellchat) + ggtitle("All pathways")
+
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(cellchat, signaling = c7 )+ ggtitle("pathways_diff_p16")
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg3 <- netAnalysis_signalingRole_scatter(cellchat, signaling =pairs )
+
+pdf(paste0(cellchatDir, "/DotPlot_InteractionStrength.pdf"))
+print(gg1)
+print(gg2)
+dev.off()
+```
+
+Identify signals contributing most to outgoing or incoming signaling of certain cell groups
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing", cluster.rows = FALSE,width = 8,height = 14)
+ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming",width = 8,height = 14)
+
+pdf(paste0(cellchatDir, "/MostContribSignals_In_Out.pdf"))
+print(ht1)
+print(ht2)
+dev.off()
+```
+
+```{r}
+qs::qsave(cellchat, paste0(cellchatDir, "/Cellchat_Object_Subset_inVivo.qs"))
+qs::qsave(cellchat, paste0(cellchatDir, "/Cellchat_Object_Subset_inVivoF.qs"))
+```
+
+```{r}
+library(ggalluvial)
+library(NMF)
+prob <- methods::slot(cellchat, "netP")$prob
+selectK(cellchat, pattern = "outgoing")
+nPatterns = 5
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "outgoing", k = nPatterns, width = 5,height = 12)
+#-----
+selectK(cellchat, pattern = "incoming")
+nPatterns = 6
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "incoming", k = nPatterns, width = 5,height = 12)
+```
+
+```{r}
+p <- netAnalysis_dot(cellchat, pattern = "outgoing")
+p2= netAnalysis_dot(cellchat, pattern = "incoming")
+pdf(paste0(cellchatDir, "/Dotplot_NetworkAnalysis.pdf"))
+print(p)
+print(p2)
+dev.off()
+```
+
+```{r}
+
+```
+
